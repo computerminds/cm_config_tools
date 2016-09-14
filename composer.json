@@ -1,7 +1,7 @@
 {
   "name": "computerminds/cm_config_tools",
   "description": "Configuration management workflow tools.",
-  "type": "drupal-module",
+  "type": "drupal-drush",
   "homepage": "http://www.computerminds.co.uk",
   "authors": [
     {
