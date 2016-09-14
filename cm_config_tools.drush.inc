@@ -25,7 +25,7 @@ function cm_config_tools_drush_command() {
   $description .= "\n";
   $description .= "cm_config_tools:"  . "\n";
   $description .= "  delete:"  . "\n";
-  $description .= "    - entity.view_display.node.article.default"  . "\n";
+  $description .= "    - field.field.node.article.body"  . "\n";
   $description .= "  create_only:"  . "\n";
   $description .= "    - image.style.full_width"  . "\n";
 
@@ -54,7 +54,7 @@ function cm_config_tools_drush_command() {
     'examples' => array(
       'drush cm-config-tools-import computerminds_profile --subprojects --preview=0' => 'Import configuration into the active storage, from the specified project and all subprojects within it, without any preview.',
     ),
-    'aliases' => array('cmc-i'),
+    'aliases' => array('cmci'),
     'core' => array('8+'),
   );
 
