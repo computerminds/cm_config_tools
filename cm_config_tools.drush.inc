@@ -18,14 +18,16 @@ function cm_config_tools_drush_command() {
   $items = array();
 
   $description = '';
-  $description .= "Write back configuration to module's config/install directory." . "\n";
-  $description .= "List which configuration settings you want to export in the" . "\n";
-  $description .= "module's info file by listing them under 'config_devel', as shown below:"  . "\n";
+  $description .= "Update configuration in active storage to what is supplied by modules" . "\n";
+  $description .= "for installation. Specify config for deletion, or as create-only (i.e." . "\n";
+  $description .= "installed if not yet present, otherwise ignored), in a module's info"  . "\n";
+  $description .= "file by listing them under 'cm_config_tools', as shown below:"  . "\n";
   $description .= "\n";
-  $description .= "config_devel:"  . "\n";
-  $description .= "  - entity.view_display.node.article.default"  . "\n";
-  $description .= "  - entity.view_display.node.article.teaser"  . "\n";
-  $description .= "  - field.instance.node.article.body"  . "\n";
+  $description .= "cm_config_tools:"  . "\n";
+  $description .= "  delete:"  . "\n";
+  $description .= "    - entity.view_display.node.article.default"  . "\n";
+  $description .= "  create_only:"  . "\n";
+  $description .= "    - image.style.full_width"  . "\n";
 
   $items['cm-config-tools-import'] = array(
     'drupal dependencies' => array('config', 'config_update'),
@@ -69,34 +71,58 @@ function drush_cm_config_tools_import($extensions) {
 
   $source_dirs = array();
   $extensions = array_map('trim', explode(',', $extensions));
-  $subdir = drush_get_option('subdir', InstallStorage::CONFIG_INSTALL_DIRECTORY);
-
   foreach ($extensions as $extension) {
     // Determine the type of extension we're dealing with.
     $type = drush_config_devel_get_type($extension);
     $extension_path = drupal_get_path($type, $extension);
-    $source_dirs[$extension_path . '/' . $subdir] = $extension;
+    $source_dirs[$extension_path] = $extension;
     if ($subprojects = drush_get_option('subprojects', 'custom')) {
       // Go hunt for subprojects within this project, filtered to those within a
       // directory called $subprojects if that was a string, and add their
       // configuration.
-      $subprojects = drush_cm_config_tools_extensions_in_project($extension_path, $subdir, $subprojects);
+      $subprojects = drush_cm_config_tools_extensions_in_project($extension_path, $subprojects);
       $source_dirs += $subprojects;
     }
   }
 
   $config_extension_map = array();
+  $subdir = drush_get_option('subdir', InstallStorage::CONFIG_INSTALL_DIRECTORY);
   foreach ($source_dirs as $source_dir => $extension) {
-    $file_storage = new FileStorage($source_dir);
+    $info_filename = $source_dir . '/' . $extension .'.info.yml';
+    $info = \Drupal::service('info_parser')->parse($info_filename);
+    $create_only = isset($info['cm_config_tools']['create_only']) ? array_flip($info['cm_config_tools']['create_only']) : array();
+
+    $file_storage = new FileStorage($source_dir . '/' . $subdir);
     foreach ($file_storage->listAll() as $name) {
       if (isset($config_extension_map[$name])) {
-        drush_set_error("Could not import configuration because the configuration item '$name' is provided by both the '$name' and '{$config_extension_map[$name]}' extensions.");
+        drush_set_error("Could not import configuration because the configuration item '$name' is found in both the '$extension' and '{$config_extension_map[$name]}' extensions.");
         return FALSE;
       }
 
+      // Replace data if it is not listed as create_only (i.e. should only be
+      // installed once), or does not yet exist.
       $config_extension_map[$name] = $extension;
-      $data = $file_storage->read($name);
-      $source_storage->replaceData($name, $data);
+      if (!isset($create_only[$name]) || !$source_storage->exists($name)) {
+        $data = $file_storage->read($name);
+        $source_storage->replaceData($name, $data);
+      }
+    }
+
+    $deletes = isset($info['cm_config_tools']['delete']) ? array_values($info['cm_config_tools']['delete']) : array();
+    foreach ($deletes as $name) {
+      if (isset($config_extension_map[$name])) {
+        if ($config_extension_map[$name] == $extension) {
+          drush_set_error("Could not import configuration because the configuration item '$name' is provided by the '$extension' extension but also listed for deletion.");
+        }
+        else {
+          drush_set_error("Could not import configuration because the configuration item '$name' is found in both the '$extension' and '{$config_extension_map[$name]}' extensions.");
+        }
+        return FALSE;
+      }
+
+      // Replacing as an empty array simulates an item being deleted.
+      $source_storage->replaceData($name, array());
+      $config_extension_map[$name] = $extension;
     }
   }
 
@@ -105,7 +131,6 @@ function drush_cm_config_tools_import($extensions) {
   // Use a custom storage comparer, based on one from an old version of
   // config_sync, that uses a more useful differ in config_update that ignores
   // changes to UUIDs and the '_core' property.
-  // @TODO Move class outisde of install profile to be packaged with drush file.
   $storage_comparer = new ConfigDiffStorageComparer($source_storage, $active_storage, $config_manager, \Drupal::service('config_update.config_diff'));
   if (!$storage_comparer->createChangelist()->hasChanges()) {
     return drush_log(dt('There are no changes to import.'), LogLevel::OK);
@@ -165,7 +190,7 @@ function drush_cm_config_tools_import($extensions) {
  *
  * This is based on drush_pm_extensions_in_project().
  */
-function drush_cm_config_tools_extensions_in_project($extension_path, $subdir, $subprojects) {
+function drush_cm_config_tools_extensions_in_project($extension_path, $subprojects) {
   $found = array();
 
   // Mask for drush_scan_directory, to match .info.yml files.
@@ -191,7 +216,7 @@ function drush_cm_config_tools_extensions_in_project($extension_path, $subdir, $
     preg_match($name_mask, $info->basename, $matches);
     $name = $matches[1];
     preg_match('/^(.*)\/(.*)$/', $info->filename, $matches);
-    $found[$matches[1] . '/' . $subdir] = $name;
+    $found[$matches[1]] = $name;
   }
 
   return $found;
