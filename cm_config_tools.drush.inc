@@ -34,13 +34,9 @@ function cm_config_tools_drush_command() {
     'drush dependencies' => array('config_devel'),
     'description' => $description,
     'arguments' => array(
-      'project' => 'Module/theme machine name. Separate multiple projects with commas.',
+      'project' => 'Module/theme machine name. Separate multiple projects with commas. If left blank, import from any enabled projects containing a \'cm_config_tools\' key in their .info.yml files.',
     ),
     'options' => array(
-      'subprojects' => array(
-        'description' => 'By default, all configuration from any projects within a \'custom\' directory below the specified directory will be imported. Pass this option without a value to import from all subprojects, 0 to disable importing from any subprojects, or to a different subdirectory name.',
-        'example-value' => 'custom',
-      ),
       'preview' => array(
         'description' => 'Format for displaying proposed changes. Recognized values: list, diff. Defaults to list. Set to 0 to disable.',
         'example-value' => 'list',
@@ -50,9 +46,10 @@ function cm_config_tools_drush_command() {
         'example-value' => 'config/optional',
       ),
     ),
-    'required-arguments' => TRUE,
+    'required-arguments' => FALSE,
     'examples' => array(
-      'drush cm-config-tools-import computerminds_profile --subprojects --preview=0' => 'Import configuration into the active storage, from the specified project and all subprojects within it, without any preview.',
+      'drush cm-config-tools-import' => 'Import configuration into the active storage, from any projects containing a \'cm_config_tools\' key in their .info.yml files.',
+      'drush cm-config-tools-import computerminds_profile --preview=0' => 'Import configuration into the active storage, from the specified project, without any preview.',
     ),
     'aliases' => array('cmci'),
     'core' => array('8+'),
@@ -64,44 +61,60 @@ function cm_config_tools_drush_command() {
 /**
  * Drush command callback.
  */
-function drush_cm_config_tools_import($extensions) {
+function drush_cm_config_tools_import($extensions = NULL) {
   /** @var \Drupal\Core\Config\StorageInterface $active_storage */
   $active_storage = \Drupal::service('config.storage');
   $source_storage = new StorageReplaceDataWrapper($active_storage);
+  $info_parser = \Drupal::service('info_parser');
 
   $source_dirs = array();
-  $extensions = array_map('trim', explode(',', $extensions));
-  foreach ($extensions as $extension) {
-    // Determine the type of extension we're dealing with.
-    $type = drush_config_devel_get_type($extension);
-    $extension_path = drupal_get_path($type, $extension);
-    $source_dirs[$extension_path] = $extension;
-    if ($subprojects = drush_get_option('subprojects', 'custom')) {
-      // Go hunt for subprojects within this project, filtered to those within a
-      // directory called $subprojects if that was a string, and add their
-      // configuration.
-      $subprojects = drush_cm_config_tools_extensions_in_project($extension_path, $subprojects);
-      $source_dirs += $subprojects;
+  if ($extensions) {
+    $extensions = array_map('trim', explode(',', $extensions));
+    foreach ($extensions as $extension_name) {
+      // Determine the type of extension we're dealing with.
+      if ($type = drush_config_devel_get_type($extension_name)) {
+        if ($extension_path = drupal_get_path($type, $extension_name)) {
+          $source_dirs[$extension_path] = $extension_name;
+        }
+      }
+    }
+  }
+  else {
+    // Import configuration from any enabled extensions with the cm_config_tools
+    // key in their .info.yml file.
+    $module_dirs = \Drupal::moduleHandler()->getModuleList();
+    $theme_dirs = \Drupal::service('theme_handler')->listInfo();
+    foreach ([$module_dirs, $theme_dirs] as $extension_dirs) {
+      /** @var \Drupal\Core\Extension\Extension[] $extension_dirs */
+      foreach ($extension_dirs as $extension_name => $extension) {
+        $info_filename = $extension->getPath() . '/' . $extension_name .'.info.yml';
+        $info = $info_parser->parse($info_filename);
+        if (isset($info['cm_config_tools'])) {
+          $source_dirs[$extension->getPath()] = $extension_name;
+        }
+      }
     }
   }
 
   $config_extension_map = array();
   $subdir = drush_get_option('subdir', InstallStorage::CONFIG_INSTALL_DIRECTORY);
-  foreach ($source_dirs as $source_dir => $extension) {
-    $info_filename = $source_dir . '/' . $extension .'.info.yml';
-    $info = \Drupal::service('info_parser')->parse($info_filename);
+  foreach ($source_dirs as $source_dir => $extension_name) {
+    // Info parser service statically caches info files, so it does not matter
+    // if file has previously been parsed above.
+    $info_filename = $source_dir . '/' . $extension_name .'.info.yml';
+    $info = $info_parser->parse($info_filename);
     $create_only = isset($info['cm_config_tools']['create_only']) ? array_flip($info['cm_config_tools']['create_only']) : array();
 
     $file_storage = new FileStorage($source_dir . '/' . $subdir);
     foreach ($file_storage->listAll() as $name) {
       if (isset($config_extension_map[$name])) {
-        drush_set_error("Could not import configuration because the configuration item '$name' is found in both the '$extension' and '{$config_extension_map[$name]}' extensions.");
+        drush_set_error("Could not import configuration because the configuration item '$name' is found in both the '$extension_name' and '{$config_extension_map[$name]}' extensions.");
         return FALSE;
       }
 
       // Replace data if it is not listed as create_only (i.e. should only be
       // installed once), or does not yet exist.
-      $config_extension_map[$name] = $extension;
+      $config_extension_map[$name] = $extension_name;
       if (!isset($create_only[$name]) || !$source_storage->exists($name)) {
         $data = $file_storage->read($name);
         $source_storage->replaceData($name, $data);
@@ -111,18 +124,18 @@ function drush_cm_config_tools_import($extensions) {
     $deletes = isset($info['cm_config_tools']['delete']) ? array_values($info['cm_config_tools']['delete']) : array();
     foreach ($deletes as $name) {
       if (isset($config_extension_map[$name])) {
-        if ($config_extension_map[$name] == $extension) {
-          drush_set_error("Could not import configuration because the configuration item '$name' is provided by the '$extension' extension but also listed for deletion.");
+        if ($config_extension_map[$name] == $extension_name) {
+          drush_set_error("Could not import configuration because the configuration item '$name' is provided by the '$extension_name' extension but also listed for deletion.");
         }
         else {
-          drush_set_error("Could not import configuration because the configuration item '$name' is found in both the '$extension' and '{$config_extension_map[$name]}' extensions.");
+          drush_set_error("Could not import configuration because the configuration item '$name' is found in both the '$extension_name' and '{$config_extension_map[$name]}' extensions.");
         }
         return FALSE;
       }
 
       // Replacing as an empty array simulates an item being deleted.
       $source_storage->replaceData($name, array());
-      $config_extension_map[$name] = $extension;
+      $config_extension_map[$name] = $extension_name;
     }
   }
 
@@ -145,7 +158,7 @@ function drush_cm_config_tools_import($extensions) {
       // Copy active storage to the temporary directory.
       $temp_dir = drush_tempdir();
       $temp_storage = new FileStorage($temp_dir);
-      foreach ($source_dirs as $source_dir => $extension) {
+      foreach ($source_dirs as $source_dir => $extension_name) {
         $source_dir_storage = new FileStorage($source_dir);
         foreach ($source_dir_storage->listAll() as $name) {
           if ($data = $active_storage->read($name)) {
@@ -162,7 +175,7 @@ function drush_cm_config_tools_import($extensions) {
         // Copy source storage to another temporary directory.
         $temp_source_dir = drush_tempdir();
         $temp_storage = new FileStorage($temp_source_dir);
-        foreach ($source_dirs as $source_dir => $extension) {
+        foreach ($source_dirs as $source_dir => $extension_name) {
           $source_dir_storage = new FileStorage($source_dir);
           foreach ($source_dir_storage->listAll() as $name) {
             if ($data = $source_storage->read($name)) {
@@ -183,43 +196,6 @@ function drush_cm_config_tools_import($extensions) {
   if (drush_confirm(dt('Import the listed configuration changes?'))) {
     return drush_op('_drush_config_import', $storage_comparer);
   }
-}
-
-/**
- * Find all extensions (modules/themes/profiles) found in specified project.
- *
- * This is based on drush_pm_extensions_in_project().
- */
-function drush_cm_config_tools_extensions_in_project($extension_path, $subprojects) {
-  $found = array();
-
-  // Mask for drush_scan_directory, to match .info.yml files.
-  $name_mask = '/(.*)\.info\.yml$/';
-
-  // Mask for drush_scan_directory, to avoid tests directories.
-  $nomask = array('.', '..', 'CVS', 'tests');
-
-  // Mask for filtering to projects within a certain subdirectory.
-  $path_mask = '/(.*)\/' . preg_quote($subprojects) . '\/(.*)\.info\.yml$/';
-
-  // Find all of the .info files
-  foreach (drush_scan_directory($extension_path, $name_mask, $nomask) as $filename => $info) {
-    $matches = array();
-    if (is_string($subprojects)) {
-      // Skip if this does not match the subprojects pattern.
-      if (!preg_match($path_mask, $info->filename, $matches)) {
-        continue;
-      }
-    }
-
-    // Extract extension name and path from filename.
-    preg_match($name_mask, $info->basename, $matches);
-    $name = $matches[1];
-    preg_match('/^(.*)\/(.*)$/', $info->filename, $matches);
-    $found[$matches[1]] = $name;
-  }
-
-  return $found;
 }
 
 /**
