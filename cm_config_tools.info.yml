@@ -1,0 +1,9 @@
+name: ComputerMinds Config tools
+type: module
+description: 'Provides advanced configuration management workflow functionality.'
+package: Configuration
+version: VERSION
+core: 8.x
+dependencies:
+  - config
+  - config_update

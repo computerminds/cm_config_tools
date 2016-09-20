@@ -2,10 +2,10 @@
 
 /**
  * @file
- * Contains \Computerminds\ConfigDiffStorageComparer.
+ * Contains \Drupal\cm_config_tools\ConfigDiffStorageComparer.
  */
 
-namespace Computerminds;
+namespace Drupal\cm_config_tools;
 
 use Drupal\Core\Config\ConfigManagerInterface;
 use Drupal\Core\Config\StorageComparer;
@@ -27,7 +27,7 @@ class ConfigDiffStorageComparer extends StorageComparer {
   protected $configDiff;
 
   /**
-   * Constructs the Niquesa Profile config storage comparer.
+   * Constructs a ConfigDiffStorageComparer.
    *
    * @param \Drupal\Core\Config\StorageInterface $source_storage
    *   Storage object used to read configuration.

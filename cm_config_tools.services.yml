@@ -1,0 +1,4 @@
+services:
+  cm_config_tools.extension_handler:
+    class: Drupal\cm_config_tools\ExtensionConfigHandler
+    arguments: ['@config.storage', '@info_parser', '@module_handler', '@module_installer', '@theme_handler', '@config.manager', '@config_update.config_diff', '@lock.persistent', '@config.typed', '@event_dispatcher', '@string_translation']

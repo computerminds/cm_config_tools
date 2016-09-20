@@ -1,7 +1,7 @@
 {
-  "name": "computerminds/cm_config_tools",
+  "name": "drupal/cm_config_tools",
   "description": "Configuration management workflow tools.",
-  "type": "drupal-drush",
+  "type": "drupal-module",
   "homepage": "http://www.computerminds.co.uk",
   "authors": [
     {
@@ -10,9 +10,6 @@
     }
   ],
   "license": "GPL-2.0+",
-  "autoload": {
-    "psr-0": {
-      "Computerminds": "lib/"
-    }
-  }
+  "minimum-stability": "dev",
+  "require": { }
 }
