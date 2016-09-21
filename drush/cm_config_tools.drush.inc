@@ -5,7 +5,7 @@
  * ComputerMinds Config tools drush integration.
  */
 
-use Drupal\cm_config_tools\StorageReplaceDataMappedWrapper;
+use Drupal\cm_config_tools\ConfigDiffStorageComparer;
 use Drupal\Core\Config\FileStorage;
 use Drupal\Core\Config\InstallStorage;
 use Drush\Log\LogLevel;
@@ -73,10 +73,10 @@ function drush_cm_config_tools_import($extensions = NULL) {
   if ($extension_dirs && ($storage_comparer = $helper->getStorageComparer($extension_dirs, $subdir))) {
     if ($preview = drush_get_option('preview', 'table')) {
       if ($preview == 'diff') {
-        drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs);
+        drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs, $subdir);
       }
       else {
-        drush_cm_config_tools_preview_table($storage_comparer->getChangelist(), $storage_comparer->getSourceStorage());
+        drush_cm_config_tools_preview_table($storage_comparer);
       }
     }
 
@@ -94,18 +94,15 @@ function drush_cm_config_tools_import($extensions = NULL) {
  * Run a full filesystem diff on the configuration to import.
  *
  * @param \Drupal\Core\Config\StorageComparerInterface $storage_comparer
- * @param array $source_dirs
- *
- * @TODO Isn't $source_dirs just extension directories? We want to be acting on
- *   config/install (or whichever other subdir) within that.
+ * @param array $extension_dirs
  */
-function drush_cm_config_tools_preview_diff($storage_comparer, $source_dirs) {
+function drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY) {
   // Copy active storage to the temporary directory.
-  $temp_dir = drush_tempdir();
+  $temp_dir = drush_cm_config_tools_tempdir('target');
   $temp_storage = new FileStorage($temp_dir);
   $active_storage = $storage_comparer->getTargetStorage();
-  foreach ($source_dirs as $source_dir => $extension_name) {
-    $source_dir_storage = new FileStorage($source_dir);
+  foreach ($extension_dirs as $source_dir => $extension_name) {
+    $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
     foreach ($source_dir_storage->listAll() as $name) {
       if ($data = $active_storage->read($name)) {
         $data = drush_cm_config_tools_normalize_config($data);
@@ -114,16 +111,16 @@ function drush_cm_config_tools_preview_diff($storage_comparer, $source_dirs) {
     }
   }
 
-  if (count($source_dirs) == 1) {
-    drush_shell_exec('diff -x %s -u %s %s', '*.git', $temp_dir, key($source_dirs));
+  if (count($extension_dirs) == 1) {
+    drush_shell_exec('diff -x %s -u %s %s', '*.git', $temp_dir, key($extension_dirs));
   }
   else {
     // Copy source storage to another temporary directory.
-    $temp_source_dir = drush_tempdir();
+    $temp_source_dir = drush_cm_config_tools_tempdir('source');
     $temp_storage = new FileStorage($temp_source_dir);
     $source_storage = $storage_comparer->getSourceStorage();
-    foreach ($source_dirs as $source_dir => $extension_name) {
-      $source_dir_storage = new FileStorage($source_dir);
+    foreach ($extension_dirs as $source_dir => $extension_name) {
+      $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
       foreach ($source_dir_storage->listAll() as $name) {
         if ($data = $source_storage->read($name)) {
           $data = drush_cm_config_tools_normalize_config($data);
@@ -137,6 +134,19 @@ function drush_cm_config_tools_preview_diff($storage_comparer, $source_dirs) {
 
   $output = drush_shell_exec_output();
   drush_print(implode("\n", $output));
+}
+
+/**
+ * Creates a temporary directory and return its path.
+ */
+function drush_cm_config_tools_tempdir($prefix) {
+  $tmp_dir = drush_trim_path(drush_find_tmp());
+  $tmp_dir .= '/drush_tmp/cm_config_tools/' . $prefix;
+
+  drush_mkdir($tmp_dir);
+  drush_register_file_for_deletion($tmp_dir);
+
+  return $tmp_dir;
 }
 
 /**
@@ -173,15 +183,15 @@ function drush_cm_config_tools_normalize_config($config, $ignore = array('uuid',
 /**
  * Print a table of config changes.
  *
- * @param array $config_changes
- *   An array of changes.
- * @param StorageReplaceDataMappedWrapper $source_storage
- *   Source storage mapping config names to the extension that provides them.
+ * @param ConfigDiffStorageComparer $storage_comparer
+ *   Storage comparer.
  *
  * @see _drush_print_config_changes_table().
  * @see _drush_format_config_changes_table().
  */
-function drush_cm_config_tools_preview_table(array $config_changes, StorageReplaceDataMappedWrapper $source_storage) {
+function drush_cm_config_tools_preview_table(ConfigDiffStorageComparer $storage_comparer) {
+  /** @var \Drupal\cm_config_tools\StorageReplaceDataMappedWrapper $source_storage */
+  $source_storage = $storage_comparer->getSourceStorage();
   if (drush_get_context('DRUSH_NOCOLOR')) {
     $red = "%s";
     $yellow = "%s";
@@ -195,7 +205,7 @@ function drush_cm_config_tools_preview_table(array $config_changes, StorageRepla
 
   $rows = array();
   $rows[] = array('Provded by', 'Config', 'Operation');
-  foreach ($config_changes as $change => $configs) {
+  foreach ($storage_comparer->getChangelist() as $change => $configs) {
     switch ($change) {
       case 'delete':
         $colour = $red;
