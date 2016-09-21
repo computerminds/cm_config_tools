@@ -2,9 +2,10 @@
 
 /**
  * @file
- * Extensions to configuration development module drush integration.
+ * ComputerMinds Config tools drush integration.
  */
 
+use Drupal\cm_config_tools\StorageReplaceDataMappedWrapper;
 use Drupal\Core\Config\FileStorage;
 use Drupal\Core\Config\InstallStorage;
 use Drush\Log\LogLevel;
@@ -60,23 +61,22 @@ function cm_config_tools_drush_command() {
  */
 function drush_cm_config_tools_import($extensions = NULL) {
   /** @var \Drupal\cm_config_tools\ExtensionConfigHandler $helper */
-  $helper = \Drupal::service('cm_config_tools.extension_handler');
+  $helper = \Drupal::service('cm_config_tools');
   if ($extensions) {
-    $source_dirs = $helper->getSourceDirectories($extensions);
+    $extension_dirs = $helper->getExtensionDirectories($extensions);
   }
   else {
-    $source_dirs = $helper->getAllSourceDirectories();
+    $extension_dirs = $helper->getAllExtensionDirectories();
   }
 
   $subdir = drush_get_option('subdir', InstallStorage::CONFIG_INSTALL_DIRECTORY);
-  if ($source_dirs && ($importer = $helper->getImporter($source_dirs, $subdir))) {
-    $storage_comparer = $importer->getStorageComparer();
+  if ($extension_dirs && ($storage_comparer = $helper->getStorageComparer($extension_dirs, $subdir))) {
     if ($preview = drush_get_option('preview', 'table')) {
       if ($preview == 'diff') {
-        drush_cm_config_tools_preview_diff($storage_comparer, $source_dirs);
+        drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs);
       }
       else {
-        drush_cm_config_tools_preview_table($storage_comparer->getChangelist(), $helper->getConfigExtensionMap());
+        drush_cm_config_tools_preview_table($storage_comparer->getChangelist(), $storage_comparer->getSourceStorage());
       }
     }
 
@@ -95,6 +95,9 @@ function drush_cm_config_tools_import($extensions = NULL) {
  *
  * @param \Drupal\Core\Config\StorageComparerInterface $storage_comparer
  * @param array $source_dirs
+ *
+ * @TODO Isn't $source_dirs just extension directories? We want to be acting on
+ *   config/install (or whichever other subdir) within that.
  */
 function drush_cm_config_tools_preview_diff($storage_comparer, $source_dirs) {
   // Copy active storage to the temporary directory.
@@ -172,33 +175,14 @@ function drush_cm_config_tools_normalize_config($config, $ignore = array('uuid',
  *
  * @param array $config_changes
  *   An array of changes.
+ * @param StorageReplaceDataMappedWrapper $source_storage
+ *   Source storage mapping config names to the extension that provides them.
  *
  * @see _drush_print_config_changes_table().
- */
-function drush_cm_config_tools_preview_table(array $config_changes, array $config_extension_map) {
-  $tbl =  _drush_cm_config_tools_format_config_changes_table($config_changes, $config_extension_map, !drush_get_context('DRUSH_NOCOLOR'));
-
-  $output = $tbl->getTable();
-  if (!stristr(PHP_OS, 'WIN')) {
-    $output = str_replace("\r\n", PHP_EOL, $output);
-  }
-
-  drush_print(rtrim($output));
-  return $tbl;
-}
-
-/**
- * Print a table of config changes.
- *
- * @param array $config_changes
- *   An array of changes.
- * @param array $config_extension_map
- *   An array mapping config names to the extension that provides them.
- *
  * @see _drush_format_config_changes_table().
  */
-function _drush_cm_config_tools_format_config_changes_table(array $config_changes, array $config_extension_map, $use_color = FALSE) {
-  if (!$use_color) {
+function drush_cm_config_tools_preview_table(array $config_changes, StorageReplaceDataMappedWrapper $source_storage) {
+  if (drush_get_context('DRUSH_NOCOLOR')) {
     $red = "%s";
     $yellow = "%s";
     $green = "%s";
@@ -226,14 +210,22 @@ function _drush_cm_config_tools_format_config_changes_table(array $config_change
         $colour = "%s";
         break;
     }
-    foreach($configs as $config) {
+    foreach ($configs as $config) {
+      $mapping = $source_storage->getMapping($config);
       $rows[] = array(
-        isset($config_extension_map[$config]) ? $config_extension_map[$config] : '',
+        $mapping ? $mapping : '',
         $config,
         sprintf($colour, $change)
       );
     }
   }
   $tbl = _drush_format_table($rows);
+
+  $output = $tbl->getTable();
+  if (!stristr(PHP_OS, 'WIN')) {
+    $output = str_replace("\r\n", PHP_EOL, $output);
+  }
+
+  drush_print(rtrim($output));
   return $tbl;
 }

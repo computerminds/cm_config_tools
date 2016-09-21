@@ -9,11 +9,11 @@ Example usage from PHP (e.g. for an update hook):
 
 ```php
 // Import configuration from all projects that contain a 'cm_config_tools' key.
-\Drupal::service('cm_config_tools.extension_handler')->importAll();
+\Drupal::service('cm_config_tools')->importAll();
 
 // Just import from mymodule
-\Drupal::service('cm_config_tools.extension_handler')->import('mymodule');
+\Drupal::service('cm_config_tools')->importExtension('mymodule');
 
 // Just import from two specific modules.
-\Drupal::service('cm_config_tools.extension_handler')->import(['mymodule', 'othermodule']);
+\Drupal::service('cm_config_tools')->importExtension(['mymodule', 'othermodule']);
 ```

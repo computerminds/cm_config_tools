@@ -51,11 +51,9 @@ class ConfigDiffStorageComparer extends StorageComparer {
    * \Drupal\config_update\ConfigDiffInterface::same() includes normalization
    * that may reduce false positives resulting from either expected differences
    * between provided and installed configuration (for example, the presence or
-   * absence of a UUID value) or incidental ordering differences.
-   *
-   * The list of updates is sorted so that dependencies are created before
-   * configuration entities that depend on them. For example, field storages
-   * should be updated before fields.
+   * absence of a UUID value) or incidental ordering differences. This does mean
+   * that recreates (deletes followed by creation under an identical name) are
+   * not supported.
    *
    * @param string $collection
    *   The storage collection to operate on.

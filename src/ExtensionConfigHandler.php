@@ -7,9 +7,7 @@
 
 namespace Drupal\cm_config_tools;
 
-use Drupal\config\StorageReplaceDataWrapper;
 use Drupal\config_update\ConfigDiffInterface;
-use Drupal\Core\Config\ConfigException;
 use Drupal\Core\Config\ConfigImporter;
 use Drupal\Core\Config\ConfigManagerInterface;
 use Drupal\Core\Config\FileStorage;
@@ -163,12 +161,10 @@ class ExtensionConfigHandler {
    *   TRUE if the operation succeeded; FALSE if the configuration changes could
    *   not be found to import. May also throw exceptions if there is a problem
    *   during saving the configuration.
-   *
-   * @see _drush_config_import()
    */
-  public function import($extension, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY) {
-    if ($source_dirs = $this->getSourceDirectories($extension)) {
-      return $this->importSourceDirectories($source_dirs, $subdir);
+  public function importExtension($extension, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY) {
+    if ($extension_dirs = $this->getExtensionDirectories($extension)) {
+      return $this->importExtensionDirectories($extension_dirs, $subdir);
     }
     else {
       return FALSE;
@@ -189,12 +185,10 @@ class ExtensionConfigHandler {
    *   TRUE if the operation succeeded; FALSE if the configuration changes could
    *   not be found to import. May also throw exceptions if there is a problem
    *   during saving the configuration.
-   *
-   * @see _drush_config_import()
    */
   public function importAll($subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY) {
-    if ($source_dirs = $this->getAllSourceDirectories()) {
-      return $this->importSourceDirectories($source_dirs, $subdir);
+    if ($extension_dirs = $this->getAllExtensionDirectories()) {
+      return $this->importExtensionDirectories($extension_dirs, $subdir);
     }
     else {
       return FALSE;
@@ -202,9 +196,7 @@ class ExtensionConfigHandler {
   }
 
   /**
-   * Import configuration from source directories.
-   *
-   * @TODO Trigger an event if the configuration could be imported?
+   * Import configuration from extension directories.
    *
    * @param array $source_dirs
    *   Array of source directories as keys, mapped to their project names.
@@ -214,36 +206,34 @@ class ExtensionConfigHandler {
    *
    * @return bool
    *   TRUE if the operation succeeded; FALSE if the configuration changes could
-   *   not be found to import. May also throw exceptions if there is a problem
-   *   during saving the configuration.
+   *   not be found to import. May throw a \Drupal\Core\Config\ConfigException
+   *   if there is a problem during saving the configuration.
    *
-   * @throws \Exception
-   * @TODO Custom exception type please.
+   * @throws ExtensionConfigLockedException
    *
    * @see _drush_config_import()
    */
-  protected function importSourceDirectories($source_dirs, $subdir) {
-    if ($config_importer = $this->getImporter($source_dirs, $subdir)) {
+  protected function importExtensionDirectories($source_dirs, $subdir) {
+    if ($storage_comparer = $this->getStorageComparer($source_dirs, $subdir)) {
+      $config_importer = new ConfigImporter(
+        $storage_comparer,
+        $this->dispatcher,
+        $this->configManager,
+        $this->lock,
+        $this->typedConfigManager,
+        $this->moduleHandler,
+        $this->moduleInstaller,
+        $this->themeHandler,
+        $this->stringTranslation
+      );
+
       if ($config_importer->alreadyImporting()) {
-        throw new \Exception('Another request may be synchronizing configuration already.');
+        throw new ExtensionConfigLockedException('Another request may be synchronizing configuration already.');
       }
       else {
-        try {
-          $config_importer->import();
-          return TRUE;
-        }
-        catch (ConfigException $e) {
-          // Return a negative result for UI purposes. We do not differentiate
-          // between an actual synchronization error and a failed lock,
-          // because concurrent synchronizations are an edge-case happening
-          // only when multiple developers or site builders attempt to do it
-          // without coordinating.
-          $message = 'The import failed due for the following reasons:' . "\n";
-          $message .= implode("\n", $config_importer->getErrors());
-
-          watchdog_exception('config_import', $e);
-          throw new \Exception($message);
-        }
+        // Calling code should handle any ConfigException.
+        $config_importer->import();
+        return TRUE;
       }
     }
     else {
@@ -252,16 +242,17 @@ class ExtensionConfigHandler {
   }
 
   /**
-   * Get configuration source directories from extensions.
+   * Get directories of supplied extensions.
    *
    * @param string|array $extension
    *   The machine name of the project to import configuration from. Multiple
    *   projects can be specified, separated with commas, or as an array.
    *
    * @return array
-   *   Array of source directories to import from, mapped to project names.
+   *   Array of directories of extensions to import from, mapped to their
+   *   project names.
    */
-  public function getSourceDirectories($extension) {
+  public function getExtensionDirectories($extension) {
     $source_dirs = array();
     if (!is_array($extension)) {
       $extension = array_map('trim', explode(',', $extension));
@@ -278,15 +269,16 @@ class ExtensionConfigHandler {
   }
 
   /**
-   * Get configuration source directories from all extensions for this workflow.
+   * Get directories of all extensions for this workflow.
    *
    * Configuration will be imported from any enabled projects that contain a
    * 'cm_config_tools' key in their .info.yml files (even if it is empty).
    *
    * @return array
-   *   Array of source directories to import from, mapped to project names.
+   *   Array of directories of extensions to import from, mapped to their
+   *   project names.
    */
-  public function getAllSourceDirectories() {
+  public function getAllExtensionDirectories() {
     $source_dirs = array();
     // Import configuration from any enabled extensions with the cm_config_tools
     // key in their .info.yml file.
@@ -306,7 +298,11 @@ class ExtensionConfigHandler {
   }
 
   /**
-   * Get the actual config importer that will do the importing.
+   * Get the config storage comparer that will be used for importing.
+   *
+   * A custom storage comparer is used, based on one from an old version of the
+   * config_sync project, that uses a more useful differ in config_update that
+   * ignores changes to UUIDs and the '_core' property.
    *
    * @param array $source_dirs
    *   Array of source directories as keys, mapped to their project names.
@@ -314,80 +310,128 @@ class ExtensionConfigHandler {
    *   The sub-directory of configuration to import. Defaults to
    *   "config/install".
    *
-   * @return bool|\Drupal\Core\Config\ConfigImporter
-   *   TRUE if the operation succeeded; FALSE if the configuration changes could
-   *   not be found to import. May also throw exceptions if there is a problem
-   *   during saving the configuration.
-   *
-   * @throws \Exception
-   * @TODO Custom exception types please.
+   * @return bool|ConfigDiffStorageComparer
+   *   The storage comparer; FALSE if configuration changes could not be found
+   *   to import.
    */
-  public function getImporter(array $source_dirs, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY) {
-    $source_storage = new StorageReplaceDataWrapper($this->activeConfigStorage);
-    $config_extension_map = array();
+  public function getStorageComparer(array $source_dirs, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY) {
+    $storage_comparer = new ConfigDiffStorageComparer(
+      $this->getSourceStorageWrapper($source_dirs, $subdir),
+      $this->activeConfigStorage,
+      $this->configManager,
+      $this->configDiff
+    );
+
+    if ($storage_comparer->createChangelist()->hasChanges()) {
+      return $storage_comparer;
+    }
+    else {
+      return FALSE;
+    }
+  }
+
+  /**
+   * Get the config storage comparer that will be used for importing.
+   *
+   * This will use a custom storage replacement wrapper that keeps a map of
+   * configuration to providing extension. This means potential conflicts can be
+   * checked and cm_config_tools info for each extension can be respected, as
+   * well as allow for nicer reporting.
+   *
+   * @param array $source_dirs
+   *   Array of source directories as keys, mapped to their project names.
+   * @param string $subdir
+   *   The sub-directory of configuration to import. Defaults to
+   *   "config/install".
+   *
+   * @return StorageReplaceDataMappedWrapper
+   *   The source storage, wrapped to allow replacing specific configuration.
+   *
+   * @throws ExtensionConfigConflictException
+   */
+  protected function getSourceStorageWrapper(array $source_dirs, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY) {
+    $source_storage = new StorageReplaceDataMappedWrapper($this->activeConfigStorage);
 
     foreach ($source_dirs as $source_dir => $extension_name) {
-      // Info parser service statically caches info files, so it does not matter
-      // if file has previously been parsed above.
-      $info_filename = $source_dir . '/' . $extension_name .'.info.yml';
-      $info = $this->infoParser->parse($info_filename);
-      $create_only = isset($info['cm_config_tools']['create_only']) ? array_flip($info['cm_config_tools']['create_only']) : array();
+      $create_only = $this->getExtensionInfo($extension_name, 'create_only', array());
+      if (is_array($create_only)) {
+        $create_only = array_flip($create_only);
+      }
+      else {
+        $create_only = array();
+      }
 
       $file_storage = new FileStorage($source_dir . '/' . $subdir);
       foreach ($file_storage->listAll() as $name) {
-        if (isset($config_extension_map[$name])) {
-          throw new \Exception("Could not import configuration because the configuration item '$name' is found in both the '$extension_name' and '{$config_extension_map[$name]}' extensions.");
+        if ($mapped = $source_storage->getMapping($name)) {
+          throw new ExtensionConfigConflictException("Could not import configuration because the configuration item '$name' is found in both the '$extension_name' and '$mapped' extensions.");
         }
 
         // Replace data if it is not listed as create_only (i.e. should only be
         // installed once), or does not yet exist.
-        $config_extension_map[$name] = $extension_name;
+        $source_storage->map($name, $extension_name);
         if (!isset($create_only[$name]) || !$source_storage->exists($name)) {
           $data = $file_storage->read($name);
           $source_storage->replaceData($name, $data);
         }
       }
 
-      $deletes = isset($info['cm_config_tools']['delete']) ? array_values($info['cm_config_tools']['delete']) : array();
-      foreach ($deletes as $name) {
-        if (isset($config_extension_map[$name])) {
-          if ($config_extension_map[$name] == $extension_name) {
-            throw new \Exception("Could not import configuration because the configuration item '$name' is provided by the '$extension_name' extension but also listed for deletion.");
+      $deletes = $this->getExtensionInfo($extension_name, 'delete', array());
+      if (is_array($deletes)) {
+        foreach ($deletes as $name) {
+          if ($mapped = $source_storage->getMapping($name)) {
+            if ($mapped == $extension_name) {
+              throw new ExtensionConfigConflictException("Could not import configuration because the configuration item '$name' is provided by the '$extension_name' extension but also listed for deletion.");
+            }
+            else {
+              throw new ExtensionConfigConflictException("Could not import configuration because the configuration item '$name' is found in both the '$extension_name' and '$mapped' extensions.");
+            }
           }
-          else {
-            throw new \Exception("Could not import configuration because the configuration item '$name' is found in both the '$extension_name' and '{$config_extension_map[$name]}' extensions.");
-          }
-        }
 
-        // Replacing as an empty array simulates an item being deleted.
-        $source_storage->replaceData($name, array());
-        $config_extension_map[$name] = $extension_name;
+          // Replacing as an empty array simulates an item being deleted.
+          $source_storage->replaceData($name, array());
+          $source_storage->map($name, $extension_name);
+        }
       }
     }
 
-    // Use a custom storage comparer, based on one from an old version of
-    // config_sync, that uses a more useful differ in config_update that
-    // ignores changes to UUIDs and the '_core' property.
-    $storage_comparer = new ConfigDiffStorageComparer($source_storage, $this->activeConfigStorage, $this->configManager, $this->configDiff);
-    if ($storage_comparer->createChangelist()->hasChanges()) {
-      $config_importer = new ConfigImporter(
-        $storage_comparer,
-        $this->dispatcher,
-        $this->configManager,
-        $this->lock,
-        $this->typedConfigManager,
-        $this->moduleHandler,
-        $this->moduleInstaller,
-        $this->themeHandler,
-        $this->stringTranslation
-      );
+    return $source_storage;
+  }
 
-      $this->setConfigExtensionMap($config_extension_map);
-      return $config_importer;
+  /**
+   * Get cm_config_tools info from extension's .info.yml file.
+   *
+   * @param string $extension_name
+   *   Extension name.
+   * @param string $key
+   *   If specified, return the value for the specific key within the
+   *   cm_config_tools info.
+   * @param mixed $default
+   *   The default value to return when $key is specified and there is no value
+   *   for it. Has no effect if $key is not specified.
+   *
+   * @return bool|mixed
+   *   If $key was not specified, just return TRUE or FALSE, depending on
+   *   whether there is any cm_config_tools info for the extension at all.
+   */
+  protected function getExtensionInfo($extension_name, $key = NULL, $default = NULL) {
+    if ($type = $this->detectExtensionType($extension_name)) {
+      if ($extension_path = drupal_get_path($type, $extension_name)) {
+        // Info parser service statically caches info files, so it does not
+        // matter that file may already have been parsed by this class.
+        $info_filename = $extension_path . '/' . $extension_name .'.info.yml';
+        $info = $this->infoParser->parse($info_filename);
+
+        if ($key) {
+          return isset($info['cm_config_tools'][$key]) ? $info['cm_config_tools'][$key] : $default;
+        }
+        else {
+          return array_key_exists('cm_config_tools', $info);
+        }
+      }
     }
-    else {
-      return FALSE;
-    }
+
+    return FALSE;
   }
 
   /**
@@ -414,26 +458,6 @@ class ExtensionConfigHandler {
     }
 
     return $type;
-  }
-
-  /**
-   * Set the map of config names to extension names.
-   *
-   * @param array $config_extension_map
-   *   The map to set.
-   */
-  protected function setConfigExtensionMap($config_extension_map) {
-    $this->configExtensionMap = $config_extension_map;
-  }
-
-  /**
-   * Get the map of config names to extension names.
-   *
-   * @return array
-   *   Map of config names to extension names.
-   */
-  public function getConfigExtensionMap() {
-    return $this->configExtensionMap;
   }
 
 
