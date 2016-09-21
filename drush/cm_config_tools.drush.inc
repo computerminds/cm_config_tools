@@ -8,6 +8,7 @@
 use Drupal\cm_config_tools\ConfigDiffStorageComparer;
 use Drupal\Core\Config\FileStorage;
 use Drupal\Core\Config\InstallStorage;
+use Drupal\Core\Config\StorageException;
 use Drush\Log\LogLevel;
 
 /**
@@ -15,6 +16,40 @@ use Drush\Log\LogLevel;
  */
 function cm_config_tools_drush_command() {
   $items = array();
+
+  $description = '';
+  $description .= "Write back configuration to module's config/install directory." . "\n";
+  $description .= "List which configuration settings you want to export in the" . "\n";
+  $description .= "module's info file by listing them under 'config_devel', as shown below:"  . "\n";
+  $description .= "\n";
+  $description .= "config_devel:"  . "\n";
+  $description .= "  - entity.view_display.node.article.default"  . "\n";
+  $description .= "  - entity.view_display.node.article.teaser"  . "\n";
+  $description .= "  - field.instance.node.article.body"  . "\n";
+
+  $items['cm-config-tools-export'] = array(
+    'drupal dependencies' => array('config', 'config_update'),
+    'description' => $description,
+    'arguments' => array(
+      'projects' => 'Module/theme machine names, separated with commas. If left blank, export to any enabled projects containing a \'cm_config_tools\' key in their .info.yml files.',
+    ),
+    'options' => array(
+      'subdir' => array(
+        'description' => 'Sub-directory of configuration to import. Defaults to "config/install".',
+        'example-value' => 'config/optional',
+      ),
+      'fully-normalize' => array(
+        'description' => 'Sort configuration keys alphabetically when exporting, and strip any empty values. This ensures more reliability when comparing between source and target config but usually means unnecessary changes.',
+      ),
+    ),
+    'required-arguments' => FALSE,
+    'examples' => array(
+      'drush cm-config-tools-export' => 'Write back configuration to the specified modules from the active storage, from any projects containing a \'cm_config_tools\' key in their .info.yml files.',
+      'drush cm-config-tools-export mymodule,othermodule --fully-normalize' => 'Write back normalized (sorted and unfiltered) configuration to the specified modules, based on .info file.',
+    ),
+    'aliases' => array('cmce'),
+    'core' => array('8+'),
+  );
 
   $description = '';
   $description .= "Update configuration in active storage to what is supplied by modules" . "\n";
@@ -54,6 +89,82 @@ function cm_config_tools_drush_command() {
   );
 
   return $items;
+}
+
+/**
+ * Drush command callback.
+ *
+ * @see drush_config_devel_export()
+ * @see drush_config_devel_get_config()
+ * @see drush_config_devel_process_config()
+ */
+function drush_cm_config_tools_export($extensions = NULL) {
+  /** @var \Drupal\cm_config_tools\ExtensionConfigHandler $helper */
+  $helper = \Drupal::service('cm_config_tools');
+  if ($extensions) {
+    $extension_dirs = $helper->getExtensionDirectories($extensions);
+  }
+  else {
+    $extension_dirs = $helper->getAllExtensionDirectories();
+  }
+
+  /** @var \Drupal\config_update\ConfigDiffer $differ */
+  $differ = \Drupal::service('config_update.config_diff');
+  $subdir = drush_get_option('subdir', InstallStorage::CONFIG_INSTALL_DIRECTORY);
+  $fully_normalize = drush_get_option('fully-normalize', FALSE);
+
+  foreach ($extension_dirs as $source_dir => $extension_name) {
+    // Determine the type of extension we're dealing with.
+    if ($type = $helper->detectExtensionType($extension_name)) {
+      if (strpos($subdir, 'config/') === 0) {
+        $subdir_type = substr($subdir, 7);
+        // Get the configuration.
+        $info = $helper->getExtensionInfo($extension_name, 'config_devel', array(), NULL);
+        // Keep backwards compatibility for the old format.
+        if (!isset($info['install'])) {
+          $info['install'] = $info;
+        }
+
+        if (isset($info[$subdir_type]) && is_array($info[$subdir_type])) {
+          // Exclude any create_only items.
+          $create_only = $helper->getExtensionInfo($extension_name, 'create_only', array());
+          if ($create_only && is_array($create_only)) {
+            $info[$subdir_type] = array_diff($info[$subdir_type], $create_only);
+          }
+
+          // Process the configuration.
+          if ($info[$subdir_type]) {
+            try {
+              $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
+              foreach ($info[$subdir_type] as $name) {
+                $config = \Drupal::config($name);
+                if ($config->isNew()) {
+                  drush_log('Config ' . $name . ' not found in active storage.', 'warning');
+                }
+                else {
+                  if ($data = $config->get()) {
+                    if (!$differ->same($data, $source_dir_storage->read($name))) {
+                      // @TODO Do better than just normalizing without sorting
+                      // or filtering.
+                      $data = drush_cm_config_tools_normalize_config($data, $fully_normalize);
+                      $source_dir_storage->write($name, $data);
+                    }
+                  }
+                }
+              }
+            }
+            catch (StorageException $e) {
+              drush_log($e->getMessage(), 'error');
+              continue;
+            }
+          }
+        }
+      }
+    }
+    else {
+      drush_set_error("Couldn't export configuration. The '$extension_name' extension is not enabled.");
+    }
+  }
 }
 
 /**
@@ -156,7 +267,7 @@ function drush_cm_config_tools_tempdir($prefix) {
  * method, so we cannot call it without wrapping that class, which isn't really
  * worth it as it only needs to be used directly here.
  */
-function drush_cm_config_tools_normalize_config($config, $ignore = array('uuid', '_core')) {
+function drush_cm_config_tools_normalize_config($config, $sort_and_filter = TRUE, $ignore = array('uuid', '_core')) {
   // Remove "ignore" elements.
   foreach ($ignore as $element) {
     unset($config[$element]);
@@ -165,18 +276,19 @@ function drush_cm_config_tools_normalize_config($config, $ignore = array('uuid',
   // Recursively normalize remaining elements, if they are arrays.
   foreach ($config as $key => $value) {
     if (is_array($value)) {
-      $new = drush_cm_config_tools_normalize_config($value, $ignore);
+      $new = drush_cm_config_tools_normalize_config($value, $sort_and_filter, $ignore);
       if (count($new)) {
         $config[$key] = $new;
       }
-      else {
+      elseif ($sort_and_filter) {
         unset($config[$key]);
       }
     }
   }
 
-  // Sort and return.
-  ksort($config);
+  if ($sort_and_filter) {
+    ksort($config);
+  }
   return $config;
 }
 

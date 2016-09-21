@@ -271,9 +271,9 @@ class ExtensionConfigHandler {
   }
 
   /**
-   * Get directories of all extensions for this workflow.
+   * Get directories of all extensions that have a 'cm_config_tools' key.
    *
-   * Configuration will be imported from any enabled projects that contain a
+   * Configuration would be imported from any enabled projects that contain a
    * 'cm_config_tools' key in their .info.yml files (even if it is empty).
    *
    * @return array
@@ -289,9 +289,7 @@ class ExtensionConfigHandler {
     foreach ([$module_dirs, $theme_dirs] as $extension_dirs) {
       /** @var \Drupal\Core\Extension\Extension[] $extension_dirs */
       foreach ($extension_dirs as $extension_name => $extension) {
-        $info_filename = $extension->getPath() . '/' . $extension_name .'.info.yml';
-        $info = $this->infoParser->parse($info_filename);
-        if (array_key_exists('cm_config_tools', $info)) {
+        if ($this->getExtensionInfo($extension_name)) {
           $source_dirs[$extension->getPath()] = $extension_name;
         }
       }
@@ -410,12 +408,16 @@ class ExtensionConfigHandler {
    * @param mixed $default
    *   The default value to return when $key is specified and there is no value
    *   for it. Has no effect if $key is not specified.
+   * @param string $parent
+   *   Defaults to cm_config_tools, but specify to get a key within a different
+   *   parent key in the .info.yml file. Specify as NULL to get a root key's
+   *   values.
    *
    * @return bool|mixed
    *   If $key was not specified, just return TRUE or FALSE, depending on
    *   whether there is any cm_config_tools info for the extension at all.
    */
-  protected function getExtensionInfo($extension_name, $key = NULL, $default = NULL) {
+  public function getExtensionInfo($extension_name, $key = NULL, $default = NULL, $parent = 'cm_config_tools') {
     if ($type = $this->detectExtensionType($extension_name)) {
       if ($extension_path = drupal_get_path($type, $extension_name)) {
         // Info parser service statically caches info files, so it does not
@@ -424,10 +426,20 @@ class ExtensionConfigHandler {
         $info = $this->infoParser->parse($info_filename);
 
         if ($key) {
-          return isset($info['cm_config_tools'][$key]) ? $info['cm_config_tools'][$key] : $default;
+          if ($parent) {
+            return isset($info[$parent][$key]) ? $info[$parent][$key] : $default;
+          }
+          else {
+            return isset($info[$key]) ? $info[$key] : $default;
+          }
         }
         else {
-          return array_key_exists('cm_config_tools', $info);
+          if ($parent) {
+            return array_key_exists($parent, $info);
+          }
+          else {
+            return FALSE;
+          }
         }
       }
     }
@@ -446,7 +458,7 @@ class ExtensionConfigHandler {
    *
    * @see drush_config_devel_get_type()
    */
-  protected function detectExtensionType($extension) {
+  public function detectExtensionType($extension) {
     $type = NULL;
     if ($this->moduleHandler->moduleExists($extension)) {
       $type = 'module';
