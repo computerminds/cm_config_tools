@@ -81,7 +81,7 @@ function drush_cm_config_tools_import($extensions = NULL) {
     }
 
     // Use _drush_config_import() rather than import methods on $helper.
-    if (drush_confirm(dt('Import the listed configuration changes?'))) {
+    if (drush_confirm(dt('Import configuration changes?'))) {
       return drush_op('_drush_config_import', $storage_comparer);
     }
   }
@@ -190,6 +190,9 @@ function drush_cm_config_tools_normalize_config($config, $ignore = array('uuid',
  * @see _drush_format_config_changes_table().
  */
 function drush_cm_config_tools_preview_table(ConfigDiffStorageComparer $storage_comparer) {
+  // Note that although $source_storage is actually a
+  // \Drupal\cm_config_tools\DecoratingCachedStorage, that just wraps a
+  // StorageReplaceDataMappedWrapper so its methods are accessible.
   /** @var \Drupal\cm_config_tools\StorageReplaceDataMappedWrapper $source_storage */
   $source_storage = $storage_comparer->getSourceStorage();
   if (drush_get_context('DRUSH_NOCOLOR')) {

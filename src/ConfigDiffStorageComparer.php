@@ -7,7 +7,7 @@
 
 namespace Drupal\cm_config_tools;
 
-use Drupal\Core\Config\ConfigManagerInterface;
+use Drupal\Core\Cache\MemoryBackend;
 use Drupal\Core\Config\StorageComparer;
 use Drupal\Core\Config\StorageInterface;
 use Drupal\config_update\ConfigDiffInterface;
@@ -29,17 +29,32 @@ class ConfigDiffStorageComparer extends StorageComparer {
   /**
    * Constructs a ConfigDiffStorageComparer.
    *
+   * Wrap the storages in a static cache so that multiple reads of the same raw
+   * configuration object are not costly, but also with a wrapper that passes
+   * unknown methods onto the wrapped storage classes.
+   *
    * @param \Drupal\Core\Config\StorageInterface $source_storage
    *   Storage object used to read configuration.
    * @param \Drupal\Core\Config\StorageInterface $target_storage
    *   Storage object used to write configuration.
-   * @param \Drupal\Core\Config\ConfigManagerInterface $config_manager
-   *   The configuration manager.
    * @param \Drupal\config_update\ConfigDiffInterface $config_diff
    *   The config differ.
+   *
+   * @see \Drupal\Core\Config\StorageComparer::__construct()
    */
-  public function __construct(StorageInterface $source_storage, StorageInterface $target_storage, ConfigManagerInterface $config_manager, ConfigDiffInterface $config_diff) {
-    parent::__construct($source_storage, $target_storage, $config_manager);
+  public function __construct(StorageInterface $source_storage, StorageInterface $target_storage, ConfigDiffInterface $config_diff) {
+    $this->sourceCacheStorage = new MemoryBackend(__CLASS__ . '::source');
+    $this->sourceStorage = new DecoratingCachedStorage(
+      $source_storage,
+      $this->sourceCacheStorage
+    );
+    $this->targetCacheStorage = new MemoryBackend(__CLASS__ . '::target');
+    $this->targetStorage = new DecoratingCachedStorage(
+      $target_storage,
+      $this->targetCacheStorage
+    );
+    $this->changelist[StorageInterface::DEFAULT_COLLECTION] = $this->getEmptyChangelist();
+
     $this->configDiff = $config_diff;
   }
 

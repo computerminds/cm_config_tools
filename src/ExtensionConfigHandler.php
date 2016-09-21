@@ -7,6 +7,8 @@
 
 namespace Drupal\cm_config_tools;
 
+use Drupal\cm_config_tools\Exception\ExtensionConfigConflictException;
+use Drupal\cm_config_tools\Exception\ExtensionConfigLockedException;
 use Drupal\config_update\ConfigDiffInterface;
 use Drupal\Core\Config\ConfigImporter;
 use Drupal\Core\Config\ConfigManagerInterface;
@@ -318,7 +320,6 @@ class ExtensionConfigHandler {
     $storage_comparer = new ConfigDiffStorageComparer(
       $this->getSourceStorageWrapper($source_dirs, $subdir),
       $this->activeConfigStorage,
-      $this->configManager,
       $this->configDiff
     );
 
