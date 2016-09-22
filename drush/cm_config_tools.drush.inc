@@ -34,6 +34,9 @@ function cm_config_tools_drush_command() {
       'projects' => 'Module/theme machine names, separated with commas. If left blank, export to any enabled projects containing a \'cm_config_tools\' key in their .info.yml files.',
     ),
     'options' => array(
+      'all' => array(
+        'description' => 'Without this option, any config listed as \'create_only\' is only exported when it has not previously been exported. Set this option to overwrite any such config even if it has been previously exported.',
+      ),
       'subdir' => array(
         'description' => 'Sub-directory of configuration to import. Defaults to "config/install".',
         'example-value' => 'config/optional',
@@ -112,6 +115,7 @@ function drush_cm_config_tools_export($extensions = NULL) {
   $differ = \Drupal::service('config_update.config_diff');
   $subdir = drush_get_option('subdir', InstallStorage::CONFIG_INSTALL_DIRECTORY);
   $fully_normalize = drush_get_option('fully-normalize', FALSE);
+  $all = drush_get_option('all', FALSE);
 
   foreach ($extension_dirs as $source_dir => $extension_name) {
     // Determine the type of extension we're dealing with.
@@ -129,7 +133,10 @@ function drush_cm_config_tools_export($extensions = NULL) {
           // Exclude any create_only items.
           $create_only = $helper->getExtensionInfo($extension_name, 'create_only', array());
           if ($create_only && is_array($create_only)) {
-            $info[$subdir_type] = array_diff($info[$subdir_type], $create_only);
+            $create_only = array_flip($create_only);
+          }
+          else {
+            $create_only = array();
           }
 
           // Process the configuration.
@@ -138,18 +145,24 @@ function drush_cm_config_tools_export($extensions = NULL) {
               $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
               foreach ($info[$subdir_type] as $name) {
                 $config = \Drupal::config($name);
-                if ($config->isNew()) {
-                  drush_log('Config ' . $name . ' not found in active storage.', 'warning');
+                if ($data = $config->get()) {
+                  $existing_export = $source_dir_storage->read($name);
+
+                  // Skip existing config that is listed as 'create only' unless
+                  // the '--all' option was passed.
+                  if ($existing_export && isset($create_only[$name]) && !$all) {
+                    continue;
+                  }
+
+                  if (!$existing_export || !$differ->same($data, $existing_export)) {
+                    // @TODO Do better than just normalizing without sorting or
+                    // filtering.
+                    $data = drush_cm_config_tools_normalize_config($data, $fully_normalize);
+                    $source_dir_storage->write($name, $data);
+                  }
                 }
                 else {
-                  if ($data = $config->get()) {
-                    if (!$differ->same($data, $source_dir_storage->read($name))) {
-                      // @TODO Do better than just normalizing without sorting
-                      // or filtering.
-                      $data = drush_cm_config_tools_normalize_config($data, $fully_normalize);
-                      $source_dir_storage->write($name, $data);
-                    }
-                  }
+                  drush_log('Config ' . $name . ' not found in active storage.', 'warning');
                 }
               }
             }
