@@ -119,11 +119,11 @@ function drush_cm_config_tools_export($extensions = NULL) {
 
   foreach ($extension_dirs as $source_dir => $extension_name) {
     // Determine the type of extension we're dealing with.
-    if ($type = $helper->detectExtensionType($extension_name)) {
+    if ($type = $helper->detectExtensionType($extension_name, TRUE)) {
       if (strpos($subdir, 'config/') === 0) {
         $subdir_type = substr($subdir, 7);
         // Get the configuration.
-        $info = $helper->getExtensionInfo($extension_name, 'config_devel', array(), NULL);
+        $info = $helper->getExtensionInfo($extension_name, 'config_devel', array(), NULL, TRUE);
         // Keep backwards compatibility for the old format.
         if (!isset($info['install'])) {
           $info['install'] = $info;
@@ -131,7 +131,7 @@ function drush_cm_config_tools_export($extensions = NULL) {
 
         if (isset($info[$subdir_type]) && is_array($info[$subdir_type])) {
           // Exclude any create_only items.
-          $create_only = $helper->getExtensionInfo($extension_name, 'create_only', array());
+          $create_only = $helper->getExtensionInfo($extension_name, 'create_only', array(), TRUE);
           if ($create_only && is_array($create_only)) {
             $create_only = array_flip($create_only);
           }

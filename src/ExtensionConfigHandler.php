@@ -412,13 +412,15 @@ class ExtensionConfigHandler {
    *   Defaults to cm_config_tools, but specify to get a key within a different
    *   parent key in the .info.yml file. Specify as NULL to get a root key's
    *   values.
+   * @param bool $disabled
+   *   Optionally check for disabled modules and themes too.
    *
    * @return bool|mixed
    *   If $key was not specified, just return TRUE or FALSE, depending on
    *   whether there is any cm_config_tools info for the extension at all.
    */
-  public function getExtensionInfo($extension_name, $key = NULL, $default = NULL, $parent = 'cm_config_tools') {
-    if ($type = $this->detectExtensionType($extension_name)) {
+  public function getExtensionInfo($extension_name, $key = NULL, $default = NULL, $parent = 'cm_config_tools', $disabled = FALSE) {
+    if ($type = $this->detectExtensionType($extension_name, $disabled)) {
       if ($extension_path = drupal_get_path($type, $extension_name)) {
         // Info parser service statically caches info files, so it does not
         // matter that file may already have been parsed by this class.
@@ -452,13 +454,17 @@ class ExtensionConfigHandler {
    *
    * @param string $extension
    *   Extension name
+   * @param bool $disabled
+   *   Optionally check for disabled modules and themes too.
+   *
    * @return string
    *   Either 'module', 'theme', 'profile', or FALSE if no valid (enabled)
    *   extension provided.
    *
    * @see drush_config_devel_get_type()
+   * @see drupal_get_filename()
    */
-  public function detectExtensionType($extension) {
+  public function detectExtensionType($extension, $disabled = FALSE) {
     $type = NULL;
     if ($this->moduleHandler->moduleExists($extension)) {
       $type = 'module';
@@ -468,6 +474,17 @@ class ExtensionConfigHandler {
     }
     elseif (drupal_get_profile() === $extension) {
       $type = 'profile';
+    }
+    elseif ($disabled) {
+      // If still unknown, retrieve the file list prepared in state by
+      // system_rebuild_module_data() and
+      // \Drupal\Core\Extension\ThemeHandlerInterface::rebuildThemeData().
+      foreach (['module', 'theme'] as $candidate) {
+        if (\Drupal::state()->get('system.' . $candidate . '.files', array())) {
+          $type = $candidate;
+          break;
+        }
+      }
     }
 
     return $type;
