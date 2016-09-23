@@ -111,7 +111,7 @@ class ConfigInstaller implements ConfigInstallerInterface {
     // Install profiles and extensions using cm_config_tools can have config
     // clashes. Configuration that has the same name as a module's configuration
     // will be used instead.
-    if ($this->helper->detectExtensionType($name) != 'profile' && !$this->helper->getExtensionInfo($name, NULL, NULL, 'cm_config_tools', TRUE)) {
+    if ($this->helper->getExtensionType($name) != 'profile' && !$this->helper->getExtensionInfo($name, NULL, NULL, 'cm_config_tools', TRUE)) {
       // Throw an exception if the module being installed contains configuration
       // that already exists. Additionally, can not continue installing more
       // modules because those may depend on the current module being installed.

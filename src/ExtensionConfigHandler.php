@@ -237,7 +237,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
     }
     foreach ($extension as $extension_name) {
       // Determine the type of extension we're dealing with.
-      if ($type = $this->detectExtensionType($extension_name)) {
+      if ($type = $this->getExtensionType($extension_name)) {
         if ($extension_path = drupal_get_path($type, $extension_name)) {
           $source_dirs[$extension_path] = $extension_name;
         }
@@ -405,7 +405,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
 
     foreach ($extension_dirs as $source_dir => $extension_name) {
       // Determine the type of extension we're dealing with.
-      if ($type = $this->detectExtensionType($extension_name, TRUE)) {
+      if ($type = $this->getExtensionType($extension_name, TRUE)) {
         if (strpos($subdir, 'config/') === 0) {
           $subdir_type = substr($subdir, 7);
           // Get the configuration.
@@ -473,7 +473,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    * {@inheritdoc}
    */
   public function getExtensionInfo($extension_name, $key = NULL, $default = NULL, $parent = 'cm_config_tools', $disabled = FALSE) {
-    if ($type = $this->detectExtensionType($extension_name, $disabled)) {
+    if ($type = $this->getExtensionType($extension_name, $disabled)) {
       if ($extension_path = drupal_get_path($type, $extension_name)) {
         // Info parser service statically caches info files, so it does not
         // matter that file may already have been parsed by this class.
@@ -517,7 +517,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    * @see drush_config_devel_get_type()
    * @see drupal_get_filename()
    */
-  public function detectExtensionType($extension, $disabled = FALSE) {
+  public function getExtensionType($extension, $disabled = FALSE) {
     $type = NULL;
     if ($this->moduleHandler->moduleExists($extension)) {
       $type = 'module';
