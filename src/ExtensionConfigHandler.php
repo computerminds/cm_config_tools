@@ -14,6 +14,7 @@ use Drupal\Core\Config\ConfigImporter;
 use Drupal\Core\Config\ConfigManagerInterface;
 use Drupal\Core\Config\FileStorage;
 use Drupal\Core\Config\InstallStorage;
+use Drupal\Core\Config\StorageComparerInterface;
 use Drupal\Core\Config\StorageException;
 use Drupal\Core\Config\StorageInterface;
 use Drupal\Core\Config\TypedConfigManagerInterface;
@@ -27,9 +28,9 @@ use Drupal\Core\StringTranslation\TranslationInterface;
 use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 
 /**
- * Defines a service to help with importing config from extensions.
+ * Defines a service to help with importing and exporting config from extensions.
  */
-class ExtensionConfigHandler {
+class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
 
   use StringTranslationTrait;
 
@@ -104,13 +105,6 @@ class ExtensionConfigHandler {
   protected $dispatcher;
 
   /**
-   * Map of config names to source extension's name.
-   *
-   * @var array
-   */
-  protected $configExtensionMap;
-
-  /**
    * Constructs a ConfigImporter.
    *
    * @param \Drupal\Core\Config\StorageInterface $active_config_storage
@@ -151,19 +145,7 @@ class ExtensionConfigHandler {
   }
 
   /**
-   * Import configuration from extensions.
-   *
-   * @param string|array $extension
-   *   The machine name of the project to import configuration from. Multiple
-   *   projects can be specified, separated with commas, or as an array.
-   * @param string $subdir
-   *   The sub-directory of configuration to import. Defaults to
-   *   "config/install".
-   *
-   * @return bool
-   *   TRUE if the operation succeeded; FALSE if the configuration changes could
-   *   not be found to import. May also throw exceptions if there is a problem
-   *   during saving the configuration.
+   * {@inheritdoc}
    */
   public function importExtension($extension, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY) {
     if ($extension_dirs = $this->getExtensionDirectories($extension)) {
@@ -175,19 +157,7 @@ class ExtensionConfigHandler {
   }
 
   /**
-   * Import configuration from all extensions for this workflow.
-   *
-   * Configuration will be imported from any enabled projects that contain a
-   * 'cm_config_tools' key in their .info.yml files (even if it is empty).
-   *
-   * @param string $subdir
-   *   The sub-directory of configuration to import. Defaults to
-   *   "config/install".
-   *
-   * @return bool
-   *   TRUE if the operation succeeded; FALSE if the configuration changes could
-   *   not be found to import. May also throw exceptions if there is a problem
-   *   during saving the configuration.
+   * {@inheritdoc}
    */
   public function importAll($subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY) {
     if ($extension_dirs = $this->getAllExtensionDirectories()) {
@@ -208,35 +178,11 @@ class ExtensionConfigHandler {
    *
    * @return bool
    *   TRUE if the operation succeeded; FALSE if the configuration changes could
-   *   not be found to import. May throw a \Drupal\Core\Config\ConfigException
-   *   if there is a problem during saving the configuration.
-   *
-   * @throws ExtensionConfigLockedException
-   *
-   * @see _drush_config_import()
+   *   not be found to import.
    */
   protected function importExtensionDirectories($source_dirs, $subdir) {
     if ($storage_comparer = $this->getStorageComparer($source_dirs, $subdir)) {
-      $config_importer = new ConfigImporter(
-        $storage_comparer,
-        $this->dispatcher,
-        $this->configManager,
-        $this->lock,
-        $this->typedConfigManager,
-        $this->moduleHandler,
-        $this->moduleInstaller,
-        $this->themeHandler,
-        $this->stringTranslation
-      );
-
-      if ($config_importer->alreadyImporting()) {
-        throw new ExtensionConfigLockedException('Another request may be synchronizing configuration already.');
-      }
-      else {
-        // Calling code should handle any ConfigException.
-        $config_importer->import();
-        return TRUE;
-      }
+      return $this->importFromComparer($storage_comparer);
     }
     else {
       return FALSE;
@@ -244,15 +190,45 @@ class ExtensionConfigHandler {
   }
 
   /**
-   * Get directories of supplied extensions.
+   * Perform import of configuration from the supplied comparer.
    *
-   * @param string|array $extension
-   *   The machine name of the project to import configuration from. Multiple
-   *   projects can be specified, separated with commas, or as an array.
+   * @param \Drupal\Core\Config\StorageComparerInterface $storage_comparer
+   *   The storage comparer.
    *
-   * @return array
-   *   Array of directories of extensions to import from, mapped to their
-   *   project names.
+   * @return bool
+   *   TRUE if the operation succeeded; May throw a
+   *   \Drupal\Core\Config\ConfigException if there is a problem during saving
+   *   the configuration.
+   *
+   * @throws ExtensionConfigLockedException
+   *
+   * @see _drush_config_import()
+   */
+  public function importFromComparer(StorageComparerInterface $storage_comparer) {
+    $config_importer = new ConfigImporter(
+      $storage_comparer,
+      $this->dispatcher,
+      $this->configManager,
+      $this->lock,
+      $this->typedConfigManager,
+      $this->moduleHandler,
+      $this->moduleInstaller,
+      $this->themeHandler,
+      $this->stringTranslation
+    );
+
+    if ($config_importer->alreadyImporting()) {
+      throw new ExtensionConfigLockedException('Another request may be synchronizing configuration already.');
+    }
+    else {
+      // Calling code should handle any ConfigException.
+      $config_importer->import();
+      return TRUE;
+    }
+  }
+
+  /**
+   * {@inheritdoc}
    */
   public function getExtensionDirectories($extension) {
     $source_dirs = array();
@@ -271,14 +247,7 @@ class ExtensionConfigHandler {
   }
 
   /**
-   * Get directories of all extensions that have a 'cm_config_tools' key.
-   *
-   * Configuration would be imported from any enabled projects that contain a
-   * 'cm_config_tools' key in their .info.yml files (even if it is empty).
-   *
-   * @return array
-   *   Array of directories of extensions to import from, mapped to their
-   *   project names.
+   * {@inheritdoc}
    */
   public function getAllExtensionDirectories() {
     $source_dirs = array();
@@ -298,21 +267,7 @@ class ExtensionConfigHandler {
   }
 
   /**
-   * Get the config storage comparer that will be used for importing.
-   *
-   * A custom storage comparer is used, based on one from an old version of the
-   * config_sync project, that uses a more useful differ in config_update that
-   * ignores changes to UUIDs and the '_core' property.
-   *
-   * @param array $source_dirs
-   *   Array of source directories as keys, mapped to their project names.
-   * @param string $subdir
-   *   The sub-directory of configuration to import. Defaults to
-   *   "config/install".
-   *
-   * @return bool|ConfigDiffStorageComparer
-   *   The storage comparer; FALSE if configuration changes could not be found
-   *   to import.
+   * {@inheritdoc}
    */
   public function getStorageComparer(array $source_dirs, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY) {
     $storage_comparer = new ConfigDiffStorageComparer(
@@ -398,30 +353,7 @@ class ExtensionConfigHandler {
   }
 
   /**
-   * Export configuration to extensions.
-   *
-   * @param string|array $extension
-   *   The machine name of the project to export configuration to. Multiple
-   *   projects can be specified, separated with commas, or as an array.
-   * @param string $subdir
-   *   The sub-directory of configuration to import. Defaults to
-   *   "config/install".
-   * @param bool $all
-   *   Optional. Without this option, any config listed as 'create_only' is only
-   *   exported when it has not previously been exported. Set this option to
-   *   overwrite any such config even if it has been previously exported.
-   * @param bool $fully_normalize
-   *   Optional. Sort configuration keys when exporting, and strip any empty
-   *   arrays. This ensures more reliability when comparing between source and
-   *   target config but usually means unnecessary changes.
-   *
-   * @return array|bool
-   *   Array of any errors, keyed by extension names, FALSE if configuration
-   *   changes could not be found to import, or TRUE on successful export.
-   *
-   * @see drush_config_devel_export()
-   * @see drush_config_devel_get_config()
-   * @see drush_config_devel_process_config()
+   * {@inheritdoc}
    */
   public function exportExtension($extension, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY, $all = FALSE, $fully_normalize = FALSE) {
     if ($extension_dirs = $this->getExtensionDirectories($extension)) {
@@ -433,30 +365,7 @@ class ExtensionConfigHandler {
   }
 
   /**
-   * Export configuration to all extensions using this workflow.
-   *
-   * Configuration will be exported to any enabled projects that contain a
-   * 'cm_config_tools' key in their .info.yml files (even if it is empty).
-   *
-   * @param string $subdir
-   *   The sub-directory of configuration to import. Defaults to
-   *   "config/install".
-   * @param bool $all
-   *   Optional. Without this option, any config listed as 'create_only' is only
-   *   exported when it has not previously been exported. Set this option to
-   *   overwrite any such config even if it has been previously exported.
-   * @param bool $fully_normalize
-   *   Optional. Sort configuration keys when exporting, and strip any empty
-   *   arrays. This ensures more reliability when comparing between source and
-   *   target config but usually means unnecessary changes.
-   *
-   * @return array|bool
-   *   Array of any errors, keyed by extension names, FALSE if configuration
-   *   changes could not be found to import, or TRUE on successful export.
-   *
-   * @see drush_config_devel_export()
-   * @see drush_config_devel_get_config()
-   * @see drush_config_devel_process_config()
+   * {@inheritdoc}
    */
   public function exportAll($subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY, $all = FALSE, $fully_normalize = FALSE) {
     if ($extension_dirs = $this->getAllExtensionDirectories()) {
@@ -561,26 +470,7 @@ class ExtensionConfigHandler {
   }
 
   /**
-   * Get cm_config_tools info from extension's .info.yml file.
-   *
-   * @param string $extension_name
-   *   Extension name.
-   * @param string $key
-   *   If specified, return the value for the specific key within the
-   *   cm_config_tools info.
-   * @param mixed $default
-   *   The default value to return when $key is specified and there is no value
-   *   for it. Has no effect if $key is not specified.
-   * @param string $parent
-   *   Defaults to cm_config_tools, but specify to get a key within a different
-   *   parent key in the .info.yml file. Specify as NULL to get a root key's
-   *   values.
-   * @param bool $disabled
-   *   Optionally check for disabled modules and themes too.
-   *
-   * @return bool|mixed
-   *   If $key was not specified, just return TRUE or FALSE, depending on
-   *   whether there is any cm_config_tools info for the extension at all.
+   * {@inheritdoc}
    */
   public function getExtensionInfo($extension_name, $key = NULL, $default = NULL, $parent = 'cm_config_tools', $disabled = FALSE) {
     if ($type = $this->detectExtensionType($extension_name, $disabled)) {
@@ -654,23 +544,7 @@ class ExtensionConfigHandler {
   }
 
   /**
-   * Normalize configuration to get helpful diffs.
-   *
-   * Unfortunately \Drupal\config_update\ConfigDiffer::normalize() is a
-   * protected method, so we cannot call it without wrapping that class, which
-   * isn't really worth it as its use is specific to us, and we have an extra
-   * couple of parameters to change its behaviour in certain situations.
-   *
-   * @param array $config
-   *   Configuration array to normalize.
-   * @param bool $sort_and_filter
-   *   Fully normalize the configuration, by sorting keys and filtering empty
-   *   arrays. Defaults to TRUE.
-   * @param array $ignore
-   *   Keys to ignore. Defaults to 'uuid' and '_core'.
-   *
-   * @return array
-   *   Normalized configuration array.
+   * {@inheritdoc}
    */
   public static function normalizeConfig($config, $sort_and_filter = TRUE, $ignore = array('uuid', '_core')) {
     // Remove "ignore" elements.
