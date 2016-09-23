@@ -14,6 +14,7 @@ use Drupal\Core\Config\ConfigImporter;
 use Drupal\Core\Config\ConfigManagerInterface;
 use Drupal\Core\Config\FileStorage;
 use Drupal\Core\Config\InstallStorage;
+use Drupal\Core\Config\StorageException;
 use Drupal\Core\Config\StorageInterface;
 use Drupal\Core\Config\TypedConfigManagerInterface;
 use Drupal\Core\Extension\InfoParserInterface;
@@ -174,7 +175,7 @@ class ExtensionConfigHandler {
   }
 
   /**
-   * Get configuration source directories from all extensions for this workflow.
+   * Import configuration from all extensions for this workflow.
    *
    * Configuration will be imported from any enabled projects that contain a
    * 'cm_config_tools' key in their .info.yml files (even if it is empty).
@@ -203,8 +204,7 @@ class ExtensionConfigHandler {
    * @param array $source_dirs
    *   Array of source directories as keys, mapped to their project names.
    * @param string $subdir
-   *   The sub-directory of configuration to import. Defaults to
-   *   "config/install".
+   *   The sub-directory of configuration to import.
    *
    * @return bool
    *   TRUE if the operation succeeded; FALSE if the configuration changes could
@@ -398,6 +398,169 @@ class ExtensionConfigHandler {
   }
 
   /**
+   * Export configuration to extensions.
+   *
+   * @param string|array $extension
+   *   The machine name of the project to export configuration to. Multiple
+   *   projects can be specified, separated with commas, or as an array.
+   * @param string $subdir
+   *   The sub-directory of configuration to import. Defaults to
+   *   "config/install".
+   * @param bool $all
+   *   Optional. Without this option, any config listed as 'create_only' is only
+   *   exported when it has not previously been exported. Set this option to
+   *   overwrite any such config even if it has been previously exported.
+   * @param bool $fully_normalize
+   *   Optional. Sort configuration keys when exporting, and strip any empty
+   *   arrays. This ensures more reliability when comparing between source and
+   *   target config but usually means unnecessary changes.
+   *
+   * @return array|bool
+   *   Array of any errors, keyed by extension names, FALSE if configuration
+   *   changes could not be found to import, or TRUE on successful export.
+   *
+   * @see drush_config_devel_export()
+   * @see drush_config_devel_get_config()
+   * @see drush_config_devel_process_config()
+   */
+  public function exportExtension($extension, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY, $all = FALSE, $fully_normalize = FALSE) {
+    if ($extension_dirs = $this->getExtensionDirectories($extension)) {
+      return $this->exportExtensionDirectories($extension_dirs, $subdir, $all, $fully_normalize);
+    }
+    else {
+      return FALSE;
+    }
+  }
+
+  /**
+   * Export configuration to all extensions using this workflow.
+   *
+   * Configuration will be exported to any enabled projects that contain a
+   * 'cm_config_tools' key in their .info.yml files (even if it is empty).
+   *
+   * @param string $subdir
+   *   The sub-directory of configuration to import. Defaults to
+   *   "config/install".
+   * @param bool $all
+   *   Optional. Without this option, any config listed as 'create_only' is only
+   *   exported when it has not previously been exported. Set this option to
+   *   overwrite any such config even if it has been previously exported.
+   * @param bool $fully_normalize
+   *   Optional. Sort configuration keys when exporting, and strip any empty
+   *   arrays. This ensures more reliability when comparing between source and
+   *   target config but usually means unnecessary changes.
+   *
+   * @return array|bool
+   *   Array of any errors, keyed by extension names, FALSE if configuration
+   *   changes could not be found to import, or TRUE on successful export.
+   *
+   * @see drush_config_devel_export()
+   * @see drush_config_devel_get_config()
+   * @see drush_config_devel_process_config()
+   */
+  public function exportAll($subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY, $all = FALSE, $fully_normalize = FALSE) {
+    if ($extension_dirs = $this->getAllExtensionDirectories()) {
+      return $this->exportExtensionDirectories($extension_dirs, $subdir, $all, $fully_normalize);
+    }
+    else {
+      return FALSE;
+    }
+  }
+
+  /**
+   * Export configuration to extension directories.
+   *
+   * @param array $extension_dirs
+   *   Array of target directories as keys, mapped to their project names.
+   * @param string $subdir
+   *   The sub-directory of configuration to import.
+   * @param bool $all
+   *   When set to FALSE, any config listed as 'create_only' is only exported
+   *   when it has not previously been exported. Set to TRUE to overwrite any
+   *   such config even if it has been previously exported.
+   * @param bool $fully_normalize
+   *   Set to TRUE to sort configuration keys when exporting, and strip any
+   *   empty arrays. This ensures more reliability when comparing between source
+   *   and target config but usually means unnecessary changes.
+   *
+   * @return array|bool
+   *   Array of any errors, keyed by extension names, FALSE if configuration
+   *   changes could not be found to import, or TRUE on successful export.
+   *
+   * @see drush_config_devel_export()
+   * @see drush_config_devel_get_config()
+   * @see drush_config_devel_process_config()
+   */
+  protected function exportExtensionDirectories($extension_dirs, $subdir, $all, $fully_normalize) {
+    $errors = [];
+
+    foreach ($extension_dirs as $source_dir => $extension_name) {
+      // Determine the type of extension we're dealing with.
+      if ($type = $this->detectExtensionType($extension_name, TRUE)) {
+        if (strpos($subdir, 'config/') === 0) {
+          $subdir_type = substr($subdir, 7);
+          // Get the configuration.
+          $info = $this->getExtensionInfo($extension_name, 'config_devel', array(), NULL, TRUE);
+          // Keep backwards compatibility for the old format that config_devel
+          // supports.
+          if (!isset($info['install'])) {
+            $info['install'] = $info;
+          }
+
+          if (isset($info[$subdir_type]) && is_array($info[$subdir_type])) {
+            // Exclude any create_only items.
+            $create_only = $this->getExtensionInfo($extension_name, 'create_only', array(), TRUE);
+            if ($create_only && is_array($create_only)) {
+              $create_only = array_flip($create_only);
+            }
+            else {
+              $create_only = array();
+            }
+
+            // Process the configuration.
+            if ($info[$subdir_type]) {
+              try {
+                $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
+                foreach ($info[$subdir_type] as $name) {
+                  $config = \Drupal::config($name);
+                  if ($data = $config->get()) {
+                    $existing_export = $source_dir_storage->read($name);
+
+                    // Skip existing config that is listed as 'create only'
+                    // unless the 'all' option was passed.
+                    if ($existing_export && isset($create_only[$name]) && !$all) {
+                      continue;
+                    }
+
+                    if (!$existing_export || !$this->configDiff->same($data, $existing_export)) {
+                      // @TODO Config to export could be differently sorted to
+                      // an existing export, which is just unnecessary change.
+                      $data = static::normalizeConfig($data, $fully_normalize);
+                      $source_dir_storage->write($name, $data);
+                    }
+                  }
+                  else {
+                    $errors[$extension_name][] = 'Config ' . $name . ' not found in active storage.';
+                  }
+                }
+              }
+              catch (StorageException $e) {
+                $errors[$extension_name][] = $e->getMessage();
+                continue;
+              }
+            }
+          }
+        }
+      }
+      else {
+        $errors[$extension_name][] = "Couldn't export configuration. The '$extension_name' extension was not found.";
+      }
+    }
+
+    return $errors ? $errors : TRUE;
+  }
+
+  /**
    * Get cm_config_tools info from extension's .info.yml file.
    *
    * @param string $extension_name
@@ -490,5 +653,48 @@ class ExtensionConfigHandler {
     return $type;
   }
 
+  /**
+   * Normalize configuration to get helpful diffs.
+   *
+   * Unfortunately \Drupal\config_update\ConfigDiffer::normalize() is a
+   * protected method, so we cannot call it without wrapping that class, which
+   * isn't really worth it as its use is specific to us, and we have an extra
+   * couple of parameters to change its behaviour in certain situations.
+   *
+   * @param array $config
+   *   Configuration array to normalize.
+   * @param bool $sort_and_filter
+   *   Fully normalize the configuration, by sorting keys and filtering empty
+   *   arrays. Defaults to TRUE.
+   * @param array $ignore
+   *   Keys to ignore. Defaults to 'uuid' and '_core'.
+   *
+   * @return array
+   *   Normalized configuration array.
+   */
+  public static function normalizeConfig($config, $sort_and_filter = TRUE, $ignore = array('uuid', '_core')) {
+    // Remove "ignore" elements.
+    foreach ($ignore as $element) {
+      unset($config[$element]);
+    }
+
+    // Recursively normalize remaining elements, if they are arrays.
+    foreach ($config as $key => $value) {
+      if (is_array($value)) {
+        $new = static::normalizeConfig($value, $sort_and_filter, $ignore);
+        if (count($new)) {
+          $config[$key] = $new;
+        }
+        elseif ($sort_and_filter) {
+          unset($config[$key]);
+        }
+      }
+    }
+
+    if ($sort_and_filter) {
+      ksort($config);
+    }
+    return $config;
+  }
 
 }

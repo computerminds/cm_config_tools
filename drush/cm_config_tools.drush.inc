@@ -8,7 +8,6 @@
 use Drupal\cm_config_tools\ConfigDiffStorageComparer;
 use Drupal\Core\Config\FileStorage;
 use Drupal\Core\Config\InstallStorage;
-use Drupal\Core\Config\StorageException;
 use Drush\Log\LogLevel;
 
 /**
@@ -42,7 +41,7 @@ function cm_config_tools_drush_command() {
         'example-value' => 'config/optional',
       ),
       'fully-normalize' => array(
-        'description' => 'Sort configuration keys alphabetically when exporting, and strip any empty values. This ensures more reliability when comparing between source and target config but usually means unnecessary changes.',
+        'description' => 'Sort configuration keys when exporting, and strip any empty arrays. This ensures more reliability when comparing between source and target config but usually means unnecessary changes.',
       ),
     ),
     'required-arguments' => FALSE,
@@ -96,86 +95,36 @@ function cm_config_tools_drush_command() {
 
 /**
  * Drush command callback.
- *
- * @see drush_config_devel_export()
- * @see drush_config_devel_get_config()
- * @see drush_config_devel_process_config()
  */
 function drush_cm_config_tools_export($extensions = NULL) {
+  $subdir = drush_get_option('subdir', InstallStorage::CONFIG_INSTALL_DIRECTORY);
+  $all = drush_get_option('all', FALSE);
+  $fully_normalize = drush_get_option('fully-normalize', FALSE);
+
   /** @var \Drupal\cm_config_tools\ExtensionConfigHandler $helper */
   $helper = \Drupal::service('cm_config_tools');
   if ($extensions) {
-    $extension_dirs = $helper->getExtensionDirectories($extensions);
+    $result = $helper->exportExtension($extensions, $subdir, $all, $fully_normalize);
   }
   else {
-    $extension_dirs = $helper->getAllExtensionDirectories();
+    $result = $helper->exportAll($subdir, $all, $fully_normalize);
   }
 
-  /** @var \Drupal\config_update\ConfigDiffer $differ */
-  $differ = \Drupal::service('config_update.config_diff');
-  $subdir = drush_get_option('subdir', InstallStorage::CONFIG_INSTALL_DIRECTORY);
-  $fully_normalize = drush_get_option('fully-normalize', FALSE);
-  $all = drush_get_option('all', FALSE);
-
-  foreach ($extension_dirs as $source_dir => $extension_name) {
-    // Determine the type of extension we're dealing with.
-    if ($type = $helper->detectExtensionType($extension_name, TRUE)) {
-      if (strpos($subdir, 'config/') === 0) {
-        $subdir_type = substr($subdir, 7);
-        // Get the configuration.
-        $info = $helper->getExtensionInfo($extension_name, 'config_devel', array(), NULL, TRUE);
-        // Keep backwards compatibility for the old format.
-        if (!isset($info['install'])) {
-          $info['install'] = $info;
-        }
-
-        if (isset($info[$subdir_type]) && is_array($info[$subdir_type])) {
-          // Exclude any create_only items.
-          $create_only = $helper->getExtensionInfo($extension_name, 'create_only', array(), TRUE);
-          if ($create_only && is_array($create_only)) {
-            $create_only = array_flip($create_only);
-          }
-          else {
-            $create_only = array();
-          }
-
-          // Process the configuration.
-          if ($info[$subdir_type]) {
-            try {
-              $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
-              foreach ($info[$subdir_type] as $name) {
-                $config = \Drupal::config($name);
-                if ($data = $config->get()) {
-                  $existing_export = $source_dir_storage->read($name);
-
-                  // Skip existing config that is listed as 'create only' unless
-                  // the '--all' option was passed.
-                  if ($existing_export && isset($create_only[$name]) && !$all) {
-                    continue;
-                  }
-
-                  if (!$existing_export || !$differ->same($data, $existing_export)) {
-                    // @TODO Do better than just normalizing without sorting or
-                    // filtering.
-                    $data = drush_cm_config_tools_normalize_config($data, $fully_normalize);
-                    $source_dir_storage->write($name, $data);
-                  }
-                }
-                else {
-                  drush_log('Config ' . $name . ' not found in active storage.', 'warning');
-                }
-              }
-            }
-            catch (StorageException $e) {
-              drush_log($e->getMessage(), 'error');
-              continue;
-            }
+  if ($result === TRUE) {
+    return drush_log(dt('Configuration successfully exported.'), LogLevel::SUCCESS);
+  }
+  else {
+    if (is_array($result)) {
+      foreach ($result as $extension_name => $extension_errors) {
+        if (is_array($extension_errors)) {
+          foreach ($extension_errors as $error) {
+            drush_set_error($error);
           }
         }
       }
     }
     else {
-      drush_set_error("Couldn't export configuration. The '$extension_name' extension is not enabled.");
+      return drush_log(dt('There is no config to export.'), LogLevel::WARNING);
     }
   }
 }
@@ -221,6 +170,8 @@ function drush_cm_config_tools_import($extensions = NULL) {
  * @param array $extension_dirs
  */
 function drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY) {
+  $helper = \Drupal::service('cm_config_tools');
+
   // Copy active storage to the temporary directory.
   $temp_dir = drush_cm_config_tools_tempdir('target');
   $temp_storage = new FileStorage($temp_dir);
@@ -229,7 +180,7 @@ function drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs, 
     $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
     foreach ($source_dir_storage->listAll() as $name) {
       if ($data = $active_storage->read($name)) {
-        $data = drush_cm_config_tools_normalize_config($data);
+        $data = $helper::normalize($data);
         $temp_storage->write($name, $data);
       }
     }
@@ -247,7 +198,7 @@ function drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs, 
       $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
       foreach ($source_dir_storage->listAll() as $name) {
         if ($data = $source_storage->read($name)) {
-          $data = drush_cm_config_tools_normalize_config($data);
+          $data = $helper::normalize($data);
           $temp_storage->write($name, $data);
         }
       }
@@ -262,47 +213,21 @@ function drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs, 
 
 /**
  * Creates a temporary directory and return its path.
+ *
+ * The directories are specifically named to make it more obvious which is the
+ * source & target directory in diffs, because the unique directory names that
+ * drush_tempdir() produces are hard to understand.
+ *
+ * @see drush_tempdir()
  */
-function drush_cm_config_tools_tempdir($prefix) {
+function drush_cm_config_tools_tempdir($suffix) {
   $tmp_dir = drush_trim_path(drush_find_tmp());
-  $tmp_dir .= '/drush_tmp/cm_config_tools/' . $prefix;
+  $tmp_dir .= '/drush_tmp/cm_config_tools/' . $suffix;
 
   drush_mkdir($tmp_dir);
   drush_register_file_for_deletion($tmp_dir);
 
   return $tmp_dir;
-}
-
-/**
- * Normalize configuration to get helpful diffs.
- *
- * Unfortunately \Drupal\config_update\ConfigDiffer::normalize() is a protected
- * method, so we cannot call it without wrapping that class, which isn't really
- * worth it as it only needs to be used directly here.
- */
-function drush_cm_config_tools_normalize_config($config, $sort_and_filter = TRUE, $ignore = array('uuid', '_core')) {
-  // Remove "ignore" elements.
-  foreach ($ignore as $element) {
-    unset($config[$element]);
-  }
-
-  // Recursively normalize remaining elements, if they are arrays.
-  foreach ($config as $key => $value) {
-    if (is_array($value)) {
-      $new = drush_cm_config_tools_normalize_config($value, $sort_and_filter, $ignore);
-      if (count($new)) {
-        $config[$key] = $new;
-      }
-      elseif ($sort_and_filter) {
-        unset($config[$key]);
-      }
-    }
-  }
-
-  if ($sort_and_filter) {
-    ksort($config);
-  }
-  return $config;
 }
 
 /**
