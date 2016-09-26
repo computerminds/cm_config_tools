@@ -16,6 +16,11 @@ use Drush\Log\LogLevel;
 function cm_config_tools_drush_command() {
   $items = array();
 
+  $dependencies = array(
+    'drupal dependencies' => array('config', 'config_update', 'cm_config_tools'),
+    'core' => array('8+'),
+  );
+
   $description = '';
   $description .= "Write back configuration to module's config/install directory." . "\n";
   $description .= "List which configuration settings you want to export in the" . "\n";
@@ -26,8 +31,7 @@ function cm_config_tools_drush_command() {
   $description .= "  - entity.view_display.node.article.teaser"  . "\n";
   $description .= "  - field.instance.node.article.body"  . "\n";
 
-  $items['cm-config-tools-export'] = array(
-    'drupal dependencies' => array('config', 'config_update'),
+  $items['cm-config-tools-export'] = $dependencies + array(
     'description' => $description,
     'arguments' => array(
       'projects' => 'Module/theme machine names, separated with commas. If left blank, export to any enabled projects containing a \'cm_config_tools\' key in their .info.yml files.',
@@ -50,7 +54,6 @@ function cm_config_tools_drush_command() {
       'drush cm-config-tools-export mymodule,othermodule --fully-normalize' => 'Write back normalized (sorted and unfiltered) configuration to the specified modules, based on .info file.',
     ),
     'aliases' => array('cmce'),
-    'core' => array('8+'),
   );
 
   $description = '';
@@ -65,8 +68,7 @@ function cm_config_tools_drush_command() {
   $description .= "  create_only:"  . "\n";
   $description .= "    - image.style.full_width"  . "\n";
 
-  $items['cm-config-tools-import'] = array(
-    'drupal dependencies' => array('config', 'config_update'),
+  $items['cm-config-tools-import'] = $dependencies + array(
     'description' => $description,
     'arguments' => array(
       'project' => 'Module/theme machine name. Separate multiple projects with commas. If left blank, import from any enabled projects containing a \'cm_config_tools\' key in their .info.yml files.',
@@ -87,7 +89,6 @@ function cm_config_tools_drush_command() {
       'drush cm-config-tools-import mymodule --preview=0' => 'Import configuration into the active storage, from the specified project, without any preview.',
     ),
     'aliases' => array('cmci'),
-    'core' => array('8+'),
   );
 
   return $items;
