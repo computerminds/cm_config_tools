@@ -190,7 +190,7 @@ interface ExtensionConfigHandlerInterface {
    *   Either 'module', 'theme', 'profile', or FALSE if no valid (enabled)
    *   extension provided.
    */
-  public function detectExtensionType($extension, $disabled = FALSE);
+  public function getExtensionType($extension, $disabled = FALSE);
 
   /**
    * Normalize configuration to get helpful diffs.
