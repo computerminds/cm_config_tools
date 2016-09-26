@@ -19,7 +19,7 @@ function cm_config_tools_drush_command() {
   $description = '';
   $description .= "Write back configuration to module's config/install directory." . "\n";
   $description .= "List which configuration settings you want to export in the" . "\n";
-  $description .= "modules info file by listing them under 'cm_config_tools', as shown below:"  . "\n";
+  $description .= "module's info file by listing them under 'cm_config_tools', as shown below:"  . "\n";
   $description .= "\n";
   $description .= "cm_config_tools:"  . "\n";
   $description .= "  managed:"  . "\n";
