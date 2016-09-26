@@ -116,7 +116,7 @@ interface ExtensionConfigHandlerInterface {
    *   The sub-directory of configuration to import. Defaults to
    *   "config/install".
    * @param bool $all
-   *   Optional. Without this option, any config listed as 'create_only' is only
+   *   Optional. Without this option, any config listed as 'unmanaged' is only
    *   exported when it has not previously been exported. Set this option to
    *   overwrite any such config even if it has been previously exported.
    * @param bool $fully_normalize
@@ -140,7 +140,7 @@ interface ExtensionConfigHandlerInterface {
    *   The sub-directory of configuration to import. Defaults to
    *   "config/install".
    * @param bool $all
-   *   Optional. Without this option, any config listed as 'create_only' is only
+   *   Optional. Without this option, any config listed as 'unmanaged' is only
    *   exported when it has not previously been exported. Set this option to
    *   overwrite any such config even if it has been previously exported.
    * @param bool $fully_normalize

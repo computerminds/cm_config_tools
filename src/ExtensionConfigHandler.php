@@ -307,12 +307,12 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
     $source_storage = new StorageReplaceDataMappedWrapper($this->activeConfigStorage);
 
     foreach ($source_dirs as $source_dir => $extension_name) {
-      $create_only = $this->getExtensionInfo($extension_name, 'create_only', array());
-      if (is_array($create_only)) {
-        $create_only = array_flip($create_only);
+      $unmanaged = $this->getExtensionInfo($extension_name, 'unmanaged', array());
+      if (is_array($unmanaged)) {
+        $unmanaged = array_flip($unmanaged);
       }
       else {
-        $create_only = array();
+        $unmanaged = array();
       }
 
       $file_storage = new FileStorage($source_dir . '/' . $subdir);
@@ -321,10 +321,10 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
           throw new ExtensionConfigConflictException("Could not import configuration because the configuration item '$name' is found in both the '$extension_name' and '$mapped' extensions.");
         }
 
-        // Replace data if it is not listed as create_only (i.e. should only be
+        // Replace data if it is not listed as unmanaged (i.e. should only be
         // installed once), or does not yet exist.
         $source_storage->map($name, $extension_name);
-        if (!isset($create_only[$name]) || !$source_storage->exists($name)) {
+        if (!isset($unmanaged[$name]) || !$source_storage->exists($name)) {
           $data = $file_storage->read($name);
           $source_storage->replaceData($name, $data);
         }
@@ -384,7 +384,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    * @param string $subdir
    *   The sub-directory of configuration to import.
    * @param bool $all
-   *   When set to FALSE, any config listed as 'create_only' is only exported
+   *   When set to FALSE, any config listed as 'unmanaged' is only exported
    *   when it has not previously been exported. Set to TRUE to overwrite any
    *   such config even if it has been previously exported.
    * @param bool $fully_normalize
@@ -406,58 +406,47 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
     foreach ($extension_dirs as $source_dir => $extension_name) {
       // Determine the type of extension we're dealing with.
       if ($type = $this->detectExtensionType($extension_name, TRUE)) {
-        if (strpos($subdir, 'config/') === 0) {
-          $subdir_type = substr($subdir, 7);
-          // Get the configuration.
-          $info = $this->getExtensionInfo($extension_name, 'config_devel', array(), NULL, TRUE);
-          // Keep backwards compatibility for the old format that config_devel
-          // supports.
-          if (!isset($info['install'])) {
-            $info['install'] = $info;
+        // Get the configuration.
+        $info = $this->getExtensionInfo($extension_name, 'managed', array(), TRUE);
+
+        if ($info && is_array($info)) {
+          // Exclude any unmanaged items.
+          $unmanaged = $this->getExtensionInfo($extension_name, 'unmanaged', array(), TRUE);
+          if ($unmanaged && is_array($unmanaged)) {
+            $unmanaged = array_flip($unmanaged);
+          }
+          else {
+            $unmanaged = array();
           }
 
-          if (isset($info[$subdir_type]) && is_array($info[$subdir_type])) {
-            // Exclude any create_only items.
-            $create_only = $this->getExtensionInfo($extension_name, 'create_only', array(), TRUE);
-            if ($create_only && is_array($create_only)) {
-              $create_only = array_flip($create_only);
-            }
-            else {
-              $create_only = array();
-            }
+          try {
+            $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
+            foreach ($info as $name) {
+              $config = \Drupal::config($name);
+              if ($data = $config->get()) {
+                $existing_export = $source_dir_storage->read($name);
 
-            // Process the configuration.
-            if ($info[$subdir_type]) {
-              try {
-                $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
-                foreach ($info[$subdir_type] as $name) {
-                  $config = \Drupal::config($name);
-                  if ($data = $config->get()) {
-                    $existing_export = $source_dir_storage->read($name);
+                // Skip existing config that is listed as 'unmanaged' unless the
+                // 'all' option was passed.
+                if ($existing_export && isset($unmanaged[$name]) && !$all) {
+                  continue;
+                }
 
-                    // Skip existing config that is listed as 'create only'
-                    // unless the 'all' option was passed.
-                    if ($existing_export && isset($create_only[$name]) && !$all) {
-                      continue;
-                    }
-
-                    if (!$existing_export || !$this->configDiff->same($data, $existing_export)) {
-                      // @TODO Config to export could be differently sorted to
-                      // an existing export, which is just unnecessary change.
-                      $data = static::normalizeConfig($data, $fully_normalize);
-                      $source_dir_storage->write($name, $data);
-                    }
-                  }
-                  else {
-                    $errors[$extension_name][] = 'Config ' . $name . ' not found in active storage.';
-                  }
+                if (!$existing_export || !$this->configDiff->same($data, $existing_export)) {
+                  // @TODO Config to export could be differently sorted to
+                  // an existing export, which is just unnecessary change.
+                  $data = static::normalizeConfig($data, $fully_normalize);
+                  $source_dir_storage->write($name, $data);
                 }
               }
-              catch (StorageException $e) {
-                $errors[$extension_name][] = $e->getMessage();
-                continue;
+              else {
+                $errors[$extension_name][] = 'Config ' . $name . ' not found in active storage.';
               }
             }
+          }
+          catch (StorageException $e) {
+            $errors[$extension_name][] = $e->getMessage();
+            continue;
           }
         }
       }
@@ -472,7 +461,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
   /**
    * {@inheritdoc}
    */
-  public function getExtensionInfo($extension_name, $key = NULL, $default = NULL, $parent = 'cm_config_tools', $disabled = FALSE) {
+  public function getExtensionInfo($extension_name, $key = NULL, $default = NULL, $disabled = FALSE) {
     if ($type = $this->detectExtensionType($extension_name, $disabled)) {
       if ($extension_path = drupal_get_path($type, $extension_name)) {
         // Info parser service statically caches info files, so it does not
@@ -481,20 +470,10 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
         $info = $this->infoParser->parse($info_filename);
 
         if ($key) {
-          if ($parent) {
-            return isset($info[$parent][$key]) ? $info[$parent][$key] : $default;
-          }
-          else {
-            return isset($info[$key]) ? $info[$key] : $default;
-          }
+          return isset($info['cm_tools_config'][$key]) ? $info['cm_tools_config'][$key] : $default;
         }
         else {
-          if ($parent) {
-            return array_key_exists($parent, $info);
-          }
-          else {
-            return FALSE;
-          }
+          return array_key_exists('cm_tools_config', $info);
         }
       }
     }

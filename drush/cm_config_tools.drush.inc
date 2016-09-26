@@ -19,12 +19,11 @@ function cm_config_tools_drush_command() {
   $description = '';
   $description .= "Write back configuration to module's config/install directory." . "\n";
   $description .= "List which configuration settings you want to export in the" . "\n";
-  $description .= "module's info file by listing them under 'config_devel', as shown below:"  . "\n";
+  $description .= "modules info file by listing them under 'cm_config_tools', as shown below:"  . "\n";
   $description .= "\n";
-  $description .= "config_devel:"  . "\n";
-  $description .= "  - entity.view_display.node.article.default"  . "\n";
-  $description .= "  - entity.view_display.node.article.teaser"  . "\n";
-  $description .= "  - field.instance.node.article.body"  . "\n";
+  $description .= "cm_config_tools:"  . "\n";
+  $description .= "  managed:"  . "\n";
+  $description .= "    - field.field.node.page.field_image"  . "\n";
 
   $items['cm-config-tools-export'] = array(
     'drupal dependencies' => array('config', 'config_update'),
@@ -34,7 +33,7 @@ function cm_config_tools_drush_command() {
     ),
     'options' => array(
       'all' => array(
-        'description' => 'Without this option, any config listed as \'create_only\' is only exported when it has not previously been exported. Set this option to overwrite any such config even if it has been previously exported.',
+        'description' => 'Without this option, any config listed as \'unmanaged\' is only exported when it has not previously been exported. Set this option to overwrite any such config even if it has been previously exported.',
       ),
       'subdir' => array(
         'description' => 'Sub-directory of configuration to import. Defaults to "config/install".',
@@ -62,7 +61,7 @@ function cm_config_tools_drush_command() {
   $description .= "cm_config_tools:"  . "\n";
   $description .= "  delete:"  . "\n";
   $description .= "    - field.field.node.article.body"  . "\n";
-  $description .= "  create_only:"  . "\n";
+  $description .= "  unmanaged:"  . "\n";
   $description .= "    - image.style.full_width"  . "\n";
 
   $items['cm-config-tools-import'] = array(
