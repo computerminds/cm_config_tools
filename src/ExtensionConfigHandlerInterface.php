@@ -176,7 +176,7 @@ interface ExtensionConfigHandlerInterface {
    *   If $key was not specified, just return TRUE or FALSE, depending on
    *   whether there is any cm_config_tools info for the extension at all.
    */
-  public function getExtensionInfo($extension_name, $key = NULL, $default = NULL, $parent = 'cm_config_tools', $disabled = FALSE);
+  public function getExtensionInfo($extension_name, $key = NULL, $default = NULL, $disabled = FALSE);
 
   /**
    * Gets the type for the given extension.
