@@ -470,10 +470,10 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
         $info = $this->infoParser->parse($info_filename);
 
         if ($key) {
-          return isset($info['cm_tools_config'][$key]) ? $info['cm_tools_config'][$key] : $default;
+          return isset($info['cm_config_tools'][$key]) ? $info['cm_config_tools'][$key] : $default;
         }
         else {
-          return array_key_exists('cm_tools_config', $info);
+          return array_key_exists('cm_config_tools', $info);
         }
       }
     }
