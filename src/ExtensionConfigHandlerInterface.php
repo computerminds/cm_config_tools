@@ -200,6 +200,8 @@ interface ExtensionConfigHandlerInterface {
    * isn't really worth it, especially as a couple of extra parameters can be
    * introduced here to behave differently for certain situations.
    *
+   * @param string $name
+   *   Configuration item name.
    * @param array $config
    *   Configuration array to normalize.
    * @param bool $sort_and_filter
@@ -213,6 +215,6 @@ interface ExtensionConfigHandlerInterface {
    *
    * @see \Drupal\config_update\ConfigDiffer::normalize()
    */
-  public static function normalizeConfig($config, $sort_and_filter = TRUE, $ignore = array('uuid', '_core'));
+  public static function normalizeConfig($name, $config, $sort_and_filter = TRUE, $ignore = array('uuid', '_core'));
 
 }
