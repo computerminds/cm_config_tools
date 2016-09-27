@@ -32,6 +32,7 @@ interface ExtensionConfigHandlerInterface {
    */
   public function importExtension($extension, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY);
 
+
   /**
    * Import configuration from all extensions for this workflow.
    *
@@ -105,6 +106,47 @@ interface ExtensionConfigHandlerInterface {
    *   TRUE if the operation succeeded.
    */
   public function importFromComparer(StorageComparerInterface $storage_comparer);
+
+  /**
+   * Get the config dependancies for an extension.
+   *
+   * For the config currently exported to a project, find the config
+   * dependencies required for it to work.
+   *
+   * @param string $extension
+   *   The machine name of the project to get the config dependencies for.
+   * @return array
+   *   An array of config the extension depends on.
+   */
+  public function getConfigDependancies($extension);
+
+  /**
+   * Suggest config dependants to export.
+   *
+   * For the config listed in a projects .info.yml, find other config that is
+   * dependant upon it, but which is not:
+   *  - Itself a dependency of the config listed in cm_config_tools.export
+   *  - Already included explicitly in cm_config_tools.export
+   *  - Explicitly ignored in the cm_config_tools.ignore
+   *
+   * @param string $extension
+   *   The machine name of the project to find dependant config for.
+   * @return array
+   *   An array of config that depends on config currently exported.
+   */
+  public function getDependentConfigSuggestions($extension);
+
+  /**
+   * Adds the provided config keys to an extensions explicitly exported config.
+   *
+   * Add the config keys to an extensions .info.yml, under
+   * cm_config_tools.export
+   *
+   * @param $extension
+   * @param $config_keys
+   * @return mixed
+   */
+  public function addConfigKeysToManifest($extension, $config_keys);
 
   /**
    * Export configuration to extensions.

@@ -352,6 +352,156 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
     return $source_storage;
   }
 
+  public function sortAndFilterOutput($dependencies) {
+    // Sort and filter dependency lists, and finally change to simple indexed
+    // array lists. This means the output can then be directly copied for use
+    // in a .info.yml file if the output format is YAML.
+    foreach (array_keys($dependencies) as $dependency_type) {
+      if ($dependencies[$dependency_type]) {
+        sort($dependencies[$dependency_type]);
+        $dependencies[$dependency_type] = array_values($dependencies[$dependency_type]);
+      }
+      else {
+        unset($dependencies[$dependency_type]);
+      }
+    }
+    return $dependencies;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function getConfigDependancies($extension, $limit = NULL) {
+    $dependencies = array();
+    $listed_config = $this->getExtensionInfo($extension, 'managed');
+    foreach ($listed_config as $key) {
+      $config_dependencies = $this->getIndividualConfigDependancies($key, $limit);
+      foreach ($config_dependencies as $dependency_type => $type_dependencies) {
+        if (!isset($dependencies[$dependency_type])) {
+          $dependencies[$dependency_type] = array();
+        }
+        $dependencies[$dependency_type] += $type_dependencies;
+      }
+    }
+    // Exclude 'core' and the specified extension from the full list.
+    unset($dependencies['module']['core']);
+    unset($dependencies['module'][$extension]);
+    return $this->sortAndFilterOutput($dependencies);
+  }
+
+  /**
+   * @param $name
+   *   The config key to find the dependencies of.
+   * @param null $recursion_limit
+   *   Optionally limit the levels of recursion.
+   * @return mixed
+   */
+  public function getIndividualConfigDependancies($name, $recursion_limit = NULL) {
+    static $recursive_iterations = 0;
+    static $checked = array();
+
+    if (!isset($checked[$name])) {
+      $config_dependencies = \Drupal::config($name)->get('dependencies');
+      if ($config_dependencies && is_array($config_dependencies)) {
+        foreach ($config_dependencies as $dependency_type => $type_dependencies) {
+          // Use associative array to avoid duplicates.
+          $config_dependencies[$dependency_type] = array_combine($type_dependencies, $type_dependencies);
+        }
+
+        // Recurse to find sub-dependencies.
+        if (isset($config_dependencies['config'])) {
+          $recursive_iterations++;
+          if ($recursion_limit && $recursive_iterations < $recursion_limit) {
+            foreach ($config_dependencies['config'] as $dependency) {
+              $sub_dependencies = $this->getIndividualConfigDependancies($dependency, $recursion_limit);
+
+              // Add this dependency's dependencies to the list to be returned.
+              foreach ($sub_dependencies as $dependency_type => $type_dependencies) {
+                if (!isset($config_dependencies[$dependency_type])) {
+                  $config_dependencies[$dependency_type] = array();
+                }
+                $config_dependencies[$dependency_type] += $type_dependencies;
+              }
+            }
+          }
+          $recursive_iterations--;
+        }
+      }
+      else {
+        $config_dependencies = array();
+      }
+
+      // Config provider is an implied module dependency.
+      $config_provider = substr($name, 0, strpos($name, '.'));
+      $config_dependencies['module'][$config_provider] = $config_provider;
+
+      $checked[$name] = $config_dependencies;
+    }
+
+    return $checked[$name];
+  }
+
+
+  /**
+   * {@inheritdoc}
+   */
+  public function getDependentConfigSuggestions($extension, $recursion_limit = NULL) {
+    $dependants = array();
+    $listed_config = $this->getExtensionInfo($extension, 'managed');
+    $dependency_manager = \Drupal::service('config.manager')
+      ->getConfigDependencyManager();
+    foreach ($listed_config as $key) {
+      // Recursively fetch configuration entities that are dependent on this
+      // configuration entity (i.e. reverse dependencies).
+      $dependants += $this->getIndividualConfigDependants($key, $dependency_manager, $recursion_limit);
+    }
+    return $this->sortAndFilterOutput(array('config' => $dependants));
+  }
+
+  /**
+   * @param $key
+   *   The config key to find the dependancies of.
+   * @param $dependency_manager
+   *
+   * @param null $recursion_limit
+   * @return mixed
+   */
+  public function getIndividualConfigDependants($key, $dependency_manager, $recursion_limit = NULL) {
+    static $recursive_iterations = 0;
+    static $checked = array();
+
+    if (!isset($checked[$key])) {
+      /** @var Drupal\Core\Config\Entity\ConfigDependencyManager $dependency_manager */
+      if ($dependants = array_keys($dependency_manager->getDependentEntities('config', $key))) {
+        // Use associative array to avoid duplicates.
+        $dependants = array_combine($dependants, $dependants);
+
+        $recursive_iterations++;
+        if ($recursion_limit && $recursive_iterations < $recursion_limit) {
+          $base_dependants = $dependants;
+          foreach ($base_dependants as $dependant) {
+            if ($sub_dependants = $this->getIndividualConfigDependants($dependant, $dependency_manager, $recursion_limit)) {
+              $dependants += $sub_dependants;
+            }
+          }
+        }
+        $recursive_iterations--;
+      }
+
+      $checked[$key] = $dependants;
+    }
+
+    return $checked[$key];
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function addConfigKeysToManifest($extension, $config_keys) {
+
+  }
+
+
   /**
    * {@inheritdoc}
    */
