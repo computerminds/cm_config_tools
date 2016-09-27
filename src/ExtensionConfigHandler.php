@@ -435,7 +435,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
                 if (!$existing_export || !$this->configDiff->same($data, $existing_export)) {
                   // @TODO Config to export could be differently sorted to
                   // an existing export, which is just unnecessary change.
-                  $data = static::normalizeConfig($data, $fully_normalize);
+                  $data = static::normalizeConfig($name, $data, $fully_normalize);
                   $source_dir_storage->write($name, $data);
                 }
               }
@@ -525,7 +525,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
   /**
    * {@inheritdoc}
    */
-  public static function normalizeConfig($config, $sort_and_filter = TRUE, $ignore = array('uuid', '_core')) {
+  public static function normalizeConfig($name, $config, $sort_and_filter = TRUE, $ignore = array('uuid', '_core')) {
     // Remove "ignore" elements.
     foreach ($ignore as $element) {
       unset($config[$element]);
@@ -534,7 +534,16 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
     // Recursively normalize remaining elements, if they are arrays.
     foreach ($config as $key => $value) {
       if (is_array($value)) {
-        $new = static::normalizeConfig($value, $sort_and_filter, $ignore);
+        // Image style effects are a special case, since they have to use UUIDs
+        // as their keys, so remove that from the ignore list. Remove this once
+        // core issue https://www.drupal.org/node/2247257 is fixed.
+        if (isset($value['uuid']) && $value['uuid'] === $key && in_array('uuid', $ignore) && preg_match('#^image\.style\.[^.]+\.effects#', $name)) {
+          $new = static::normalizeConfig($name . '.' . $key, $value, $sort_and_filter, array_diff($ignore, array('uuid')));
+        }
+        else {
+          $new = static::normalizeConfig($name . '.' . $key, $value, $sort_and_filter, $ignore);
+        }
+
         if (count($new)) {
           $config[$key] = $new;
         }
