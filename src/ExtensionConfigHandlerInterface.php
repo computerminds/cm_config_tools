@@ -118,23 +118,17 @@ interface ExtensionConfigHandlerInterface {
    * @return array
    *   An array of config the extension depends on.
    */
-  public function getConfigDependencies($extension);
+  public function getExtensionConfigDependencies($extension);
 
   /**
-   * Suggest config dependants to export.
-   *
-   * For the config listed in a projects .info.yml, find other config that is
-   * dependant upon it, but which is not:
-   *  - Itself a dependency of the config listed in cm_config_tools.managed
-   *  - Already included explicitly in cm_config_tools.managed
-   *  - Explicitly ignored in the cm_config_tools.unmanaged
+   * Suggest config to manage, based on currently managed config.
    *
    * @param string $extension
-   *   The machine name of the project to find dependant config for.
+   *   The machine name of the project to find suggested config for.
    * @return array
-   *   An array of config that depends on config currently exported.
+   *   An array of config suggestions.
    */
-  public function getDependentConfigSuggestions($extension);
+  public function getExtensionConfigSuggestions($extension);
 
   /**
    * Adds the provided config keys to an extensions managed config.

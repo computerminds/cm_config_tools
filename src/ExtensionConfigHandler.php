@@ -371,7 +371,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
   /**
    * {@inheritdoc}
    */
-  public function getConfigDependencies($extension, $limit = NULL) {
+  public function getExtensionConfigDependencies($extension, $limit = NULL) {
     $dependencies = array();
     $listed_config = $this->getExtensionInfo($extension, 'managed');
     foreach ($listed_config as $key) {
@@ -443,9 +443,20 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
 
 
   /**
-   * {@inheritdoc}
+   * Suggest config to manage, based on currently managed config.
+   *
+   * For the config listed in a projects .info.yml, find other config that is
+   * dependant upon it, but which is not:
+   *  - Itself a dependency of the config listed in cm_config_tools.managed
+   *  - Already included explicitly in cm_config_tools.managed
+   *  - Explicitly ignored in the cm_config_tools.unmanaged
+   *
+   * @param string $extension
+   *   The machine name of the project to find suggested config for.
+   * @return array
+   *   An array of config suggestions.
    */
-  public function getDependentConfigSuggestions($extension, $recursion_limit = NULL) {
+  public function getExtensionConfigSuggestions($extension, $recursion_limit = NULL) {
     $dependants = array();
     $listed_config = $this->getExtensionInfo($extension, 'managed');
     $dependency_manager = \Drupal::service('config.manager')
