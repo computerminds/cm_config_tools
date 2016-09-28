@@ -125,9 +125,9 @@ interface ExtensionConfigHandlerInterface {
    *
    * For the config listed in a projects .info.yml, find other config that is
    * dependant upon it, but which is not:
-   *  - Itself a dependency of the config listed in cm_config_tools.export
-   *  - Already included explicitly in cm_config_tools.export
-   *  - Explicitly ignored in the cm_config_tools.ignore
+   *  - Itself a dependency of the config listed in cm_config_tools.managed
+   *  - Already included explicitly in cm_config_tools.managed
+   *  - Explicitly ignored in the cm_config_tools.unmanaged
    *
    * @param string $extension
    *   The machine name of the project to find dependant config for.
@@ -137,10 +137,10 @@ interface ExtensionConfigHandlerInterface {
   public function getDependentConfigSuggestions($extension);
 
   /**
-   * Adds the provided config keys to an extensions explicitly exported config.
+   * Adds the provided config keys to an extensions managed config.
    *
    * Add the config keys to an extensions .info.yml, under
-   * cm_config_tools.export
+   * cm_config_tools.managed
    *
    * @param $extension
    * @param $config_keys
