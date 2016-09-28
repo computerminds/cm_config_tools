@@ -88,7 +88,8 @@ function cm_config_tools_drush_command() {
   );
 
   // @TODO Add commands to get dependencies and suggest dependants. Optionally
-  // invoke them from drush_cm_config_tools_export().
+  // invoke them from drush_cm_config_tools_export(). See the @TODO note in
+  // ExtensionConfigHandlerInterface::export() for options.
 
   return $items;
 }

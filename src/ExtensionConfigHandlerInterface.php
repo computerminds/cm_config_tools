@@ -179,6 +179,11 @@ interface ExtensionConfigHandlerInterface {
    * @return array|bool
    *   Array of any errors, keyed by extension names, FALSE if configuration
    *   changes could not be found to import, or TRUE on successful export.
+   *
+   * @TODO Optionally (but by default) export dependencies, and suggest config
+   * dependants to export to (allowing opt-out of getting suggestions, and if
+   * possible allowing opt-in to export all dependants).
+   * @TODO Support 'implicit' exporting of dependants.
    */
   public function export($subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY, $force_unmanaged = FALSE, $fully_normalize = FALSE);
 
