@@ -282,6 +282,7 @@ function drush_cm_config_tools_preview_table(ConfigDiffStorageComparer $storage_
       );
     }
   }
+  uasort($rows, 'drush_cm_config_tools_sort_preview_table');
   $tbl = _drush_format_table($rows);
 
   $output = $tbl->getTable();
@@ -291,4 +292,16 @@ function drush_cm_config_tools_preview_table(ConfigDiffStorageComparer $storage_
 
   drush_print(rtrim($output));
   return $tbl;
+}
+
+/**
+ * Sort rows in table by the values in each column.
+ */
+function drush_cm_config_tools_sort_preview_table($a, $b) {
+  foreach ($a as $i => $cell) {
+    if ($cmp = strcmp($cell, $b[$i])) {
+      return $cmp;
+    }
+  }
+  return 0;
 }
