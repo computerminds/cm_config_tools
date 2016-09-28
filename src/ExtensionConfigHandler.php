@@ -371,11 +371,11 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
   /**
    * {@inheritdoc}
    */
-  public function getConfigDependancies($extension, $limit = NULL) {
+  public function getConfigDependencies($extension, $limit = NULL) {
     $dependencies = array();
     $listed_config = $this->getExtensionInfo($extension, 'managed');
     foreach ($listed_config as $key) {
-      $config_dependencies = $this->getIndividualConfigDependancies($key, $limit);
+      $config_dependencies = $this->getIndividualConfigDependencies($key, $limit);
       foreach ($config_dependencies as $dependency_type => $type_dependencies) {
         if (!isset($dependencies[$dependency_type])) {
           $dependencies[$dependency_type] = array();
@@ -396,7 +396,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    *   Optionally limit the levels of recursion.
    * @return mixed
    */
-  public function getIndividualConfigDependancies($name, $recursion_limit = NULL) {
+  public function getIndividualConfigDependencies($name, $recursion_limit = NULL) {
     static $recursive_iterations = 0;
     static $checked = array();
 
@@ -413,7 +413,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
           $recursive_iterations++;
           if ($recursion_limit && $recursive_iterations < $recursion_limit) {
             foreach ($config_dependencies['config'] as $dependency) {
-              $sub_dependencies = $this->getIndividualConfigDependancies($dependency, $recursion_limit);
+              $sub_dependencies = $this->getIndividualConfigDependencies($dependency, $recursion_limit);
 
               // Add this dependency's dependencies to the list to be returned.
               foreach ($sub_dependencies as $dependency_type => $type_dependencies) {
@@ -460,7 +460,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
 
   /**
    * @param $key
-   *   The config key to find the dependancies of.
+   *   The config key to find the dependencies of.
    * @param $dependency_manager
    *
    * @param null $recursion_limit

@@ -108,7 +108,7 @@ interface ExtensionConfigHandlerInterface {
   public function importFromComparer(StorageComparerInterface $storage_comparer);
 
   /**
-   * Get the config dependancies for an extension.
+   * Get the config dependencies for an extension.
    *
    * For the config currently exported to a project, find the config
    * dependencies required for it to work.
@@ -118,7 +118,7 @@ interface ExtensionConfigHandlerInterface {
    * @return array
    *   An array of config the extension depends on.
    */
-  public function getConfigDependancies($extension);
+  public function getConfigDependencies($extension);
 
   /**
    * Suggest config dependants to export.
