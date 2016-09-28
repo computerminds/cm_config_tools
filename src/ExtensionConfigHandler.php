@@ -375,7 +375,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
     $dependencies = array();
     $listed_config = $this->getExtensionInfo($extension, 'managed');
     foreach ($listed_config as $key) {
-      $config_dependencies = $this->getIndividualConfigDependencies($key, $limit);
+      $config_dependencies = $this->getConfigDependencies($key, $limit);
       foreach ($config_dependencies as $dependency_type => $type_dependencies) {
         if (!isset($dependencies[$dependency_type])) {
           $dependencies[$dependency_type] = array();
@@ -396,7 +396,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    *   Optionally limit the levels of recursion.
    * @return mixed
    */
-  public function getIndividualConfigDependencies($name, $recursion_limit = NULL) {
+  public function getConfigDependencies($name, $recursion_limit = NULL) {
     static $recursive_iterations = 0;
     static $checked = array();
 
@@ -464,7 +464,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
     foreach ($listed_config as $key) {
       // Recursively fetch configuration entities that are dependent on this
       // configuration entity (i.e. reverse dependencies).
-      $dependants += $this->getIndividualConfigDependants($key, $dependency_manager, $recursion_limit);
+      $dependants += $this->getConfigSuggestions($key, $dependency_manager, $recursion_limit);
     }
     return $this->sortAndFilterOutput(array('config' => $dependants));
   }
@@ -477,7 +477,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    * @param null $recursion_limit
    * @return mixed
    */
-  public function getIndividualConfigDependants($key, $dependency_manager, $recursion_limit = NULL) {
+  public function getConfigSuggestions($key, $dependency_manager, $recursion_limit = NULL) {
     static $recursive_iterations = 0;
     static $checked = array();
 
@@ -491,7 +491,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
         if ($recursion_limit && $recursive_iterations < $recursion_limit) {
           $base_dependants = $dependants;
           foreach ($base_dependants as $dependant) {
-            if ($sub_dependants = $this->getIndividualConfigDependants($dependant, $dependency_manager, $recursion_limit)) {
+            if ($sub_dependants = $this->getConfigSuggestions($dependant, $dependency_manager, $recursion_limit)) {
               $dependants += $sub_dependants;
             }
           }
