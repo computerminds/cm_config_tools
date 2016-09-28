@@ -352,7 +352,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
     return $source_storage;
   }
 
-  public function sortAndFilterOutput($dependencies) {
+  protected function sortAndFilterOutput($dependencies) {
     // Sort and filter dependency lists, and finally change to simple indexed
     // array lists. This means the output can then be directly copied for use
     // in a .info.yml file if the output format is YAML.
