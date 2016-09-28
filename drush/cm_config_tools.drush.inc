@@ -32,11 +32,9 @@ function cm_config_tools_drush_command() {
 
   $items['cm-config-tools-export'] = $dependencies + array(
     'description' => $description,
-    'arguments' => array(
-      'projects' => 'Module/theme machine names, separated with commas. If left blank, export to any enabled projects containing a \'cm_config_tools\' key in their .info.yml files.',
-    ),
+    'arguments' => array(),
     'options' => array(
-      'all' => array(
+      'force-unmanaged' => array(
         'description' => 'Without this option, any config listed as \'unmanaged\' is only exported when it has not previously been exported. Set this option to overwrite any such config even if it has been previously exported.',
       ),
       'subdir' => array(
@@ -44,13 +42,12 @@ function cm_config_tools_drush_command() {
         'example-value' => 'config/optional',
       ),
       'fully-normalize' => array(
-        'description' => 'Sort configuration keys when exporting, and strip any empty arrays. This ensures more reliability when comparing between source and target config but usually means unnecessary changes.',
+        'description' => 'Sort keys within configuration items when exporting, and strip any empty arrays. This ensures more reliability when comparing between source and target config but usually means unnecessary changes.',
       ),
     ),
     'required-arguments' => FALSE,
     'examples' => array(
-      'drush cm-config-tools-export' => 'Write back configuration to the specified modules from the active storage, from any projects containing a \'cm_config_tools\' key in their .info.yml files.',
-      'drush cm-config-tools-export mymodule,othermodule --fully-normalize' => 'Write back normalized (sorted and unfiltered) configuration to the specified modules, based on .info file.',
+      'drush cm-config-tools-export' => 'Write back configuration from the active storage, to any projects containing a \'cm_config_tools\' key in their .info.yml files.',
     ),
     'aliases' => array('cmce'),
   );
@@ -69,13 +66,14 @@ function cm_config_tools_drush_command() {
 
   $items['cm-config-tools-import'] = $dependencies + array(
     'description' => $description,
-    'arguments' => array(
-      'project' => 'Module/theme machine name. Separate multiple projects with commas. If left blank, import from any enabled projects containing a \'cm_config_tools\' key in their .info.yml files.',
-    ),
+    'arguments' => array(),
     'options' => array(
       'preview' => array(
         'description' => 'Format for displaying proposed changes. Recognized values: list, diff. Defaults to list. Set to 0 to disable.',
         'example-value' => 'list',
+      ),
+      'force-unmanaged' => array(
+        'description' => 'Without this option, any config listed as \'unmanaged\' is only imported when it has not previously been created. Set this option to overwrite any such config even if it has been previously created.',
       ),
       'subdir' => array(
         'description' => 'Sub-directory of configuration to import. Defaults to "config/install".',
@@ -84,11 +82,13 @@ function cm_config_tools_drush_command() {
     ),
     'required-arguments' => FALSE,
     'examples' => array(
-      'drush cm-config-tools-import' => 'Import configuration into the active storage, from any projects containing a \'cm_config_tools\' key in their .info.yml files.',
-      'drush cm-config-tools-import mymodule --preview=0' => 'Import configuration into the active storage, from the specified project, without any preview.',
+      'drush cm-config-tools-import --preview=0' => 'Import configuration into the active storage, from any projects containing a \'cm_config_tools\' key in their .info.yml files, without any preview.',
     ),
     'aliases' => array('cmci'),
   );
+
+  // @TODO Add commands to get dependencies and suggest dependants. Optionally
+  // invoke them from drush_cm_config_tools_export().
 
   return $items;
 }
@@ -96,19 +96,14 @@ function cm_config_tools_drush_command() {
 /**
  * Drush command callback.
  */
-function drush_cm_config_tools_export($extensions = NULL) {
+function drush_cm_config_tools_export() {
   $subdir = drush_get_option('subdir', InstallStorage::CONFIG_INSTALL_DIRECTORY);
-  $all = drush_get_option('all', FALSE);
+  $force_unmanaged = drush_get_option('force-unmanaged', FALSE);
   $fully_normalize = drush_get_option('fully-normalize', FALSE);
 
   /** @var \Drupal\cm_config_tools\ExtensionConfigHandler $helper */
   $helper = \Drupal::service('cm_config_tools');
-  if ($extensions) {
-    $result = $helper->exportExtension($extensions, $subdir, $all, $fully_normalize);
-  }
-  else {
-    $result = $helper->exportAll($subdir, $all, $fully_normalize);
-  }
+  $result = $helper->export($subdir, $force_unmanaged, $fully_normalize);
 
   if ($result === TRUE) {
     return drush_log(dt('Configuration successfully exported.'), LogLevel::SUCCESS);
@@ -132,18 +127,14 @@ function drush_cm_config_tools_export($extensions = NULL) {
 /**
  * Drush command callback.
  */
-function drush_cm_config_tools_import($extensions = NULL) {
+function drush_cm_config_tools_import() {
   /** @var \Drupal\cm_config_tools\ExtensionConfigHandler $helper */
   $helper = \Drupal::service('cm_config_tools');
-  if ($extensions) {
-    $extension_dirs = $helper->getExtensionDirectories($extensions);
-  }
-  else {
-    $extension_dirs = $helper->getAllExtensionDirectories();
-  }
-
   $subdir = drush_get_option('subdir', InstallStorage::CONFIG_INSTALL_DIRECTORY);
-  if ($extension_dirs && ($storage_comparer = $helper->getStorageComparer($extension_dirs, $subdir))) {
+  $force_unmanaged = drush_get_option('force-unmanaged', FALSE);
+  $extension_dirs = $helper->getExtensionDirectories();
+
+  if ($extension_dirs && ($storage_comparer = $helper->getStorageComparer($extension_dirs, $subdir, $force_unmanaged))) {
     if ($preview = drush_get_option('preview', 'table')) {
       if ($preview == 'diff') {
         drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs, $subdir);

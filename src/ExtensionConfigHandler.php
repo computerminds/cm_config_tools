@@ -12,6 +12,7 @@ use Drupal\cm_config_tools\Exception\ExtensionConfigLockedException;
 use Drupal\config_update\ConfigDiffInterface;
 use Drupal\Core\Config\ConfigImporter;
 use Drupal\Core\Config\ConfigManagerInterface;
+use Drupal\Core\Config\Entity\ConfigDependencyManager;
 use Drupal\Core\Config\FileStorage;
 use Drupal\Core\Config\InstallStorage;
 use Drupal\Core\Config\StorageComparerInterface;
@@ -23,6 +24,7 @@ use Drupal\Core\Extension\ModuleHandlerInterface;
 use Drupal\Core\Extension\ModuleInstallerInterface;
 use Drupal\Core\Extension\ThemeHandlerInterface;
 use Drupal\Core\Lock\LockBackendInterface;
+use Drupal\Core\State\StateInterface;
 use Drupal\Core\StringTranslation\StringTranslationTrait;
 use Drupal\Core\StringTranslation\TranslationInterface;
 use Symfony\Component\EventDispatcher\EventDispatcherInterface;
@@ -91,6 +93,13 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
   protected $lock;
 
   /**
+   * The Key/Value Store to use for state.
+   *
+   * @var \Drupal\Core\State\StateInterface
+   */
+  protected $state;
+
+  /**
    * The typed config manager.
    *
    * @var \Drupal\Core\Config\TypedConfigManagerInterface
@@ -123,6 +132,8 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    *   The config differ.
    * @param \Drupal\Core\Lock\LockBackendInterface $lock
    *   The lock backend to ensure multiple imports do not occur at the same time.
+   * @param \Drupal\Core\State\StateInterface $state
+   *   The state keyvalue store.
    * @param \Drupal\Core\Config\TypedConfigManagerInterface $typed_config
    *   The typed configuration manager.
    * @param \Symfony\Component\EventDispatcher\EventDispatcherInterface $dispatcher
@@ -130,7 +141,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    * @param \Drupal\Core\StringTranslation\TranslationInterface $translation
    *   String translation service.
    */
-  public function __construct(StorageInterface $active_config_storage, InfoParserInterface $info_parser, ModuleHandlerInterface $module_handler, ModuleInstallerInterface $module_installer, ThemeHandlerInterface $theme_handler, ConfigManagerInterface $config_manager, ConfigDiffInterface $config_diff, LockBackendInterface $lock, TypedConfigManagerInterface $typed_config, EventDispatcherInterface $dispatcher, TranslationInterface $translation) {
+  public function __construct(StorageInterface $active_config_storage, InfoParserInterface $info_parser, ModuleHandlerInterface $module_handler, ModuleInstallerInterface $module_installer, ThemeHandlerInterface $theme_handler, ConfigManagerInterface $config_manager, ConfigDiffInterface $config_diff, LockBackendInterface $lock, StateInterface $state, TypedConfigManagerInterface $typed_config, EventDispatcherInterface $dispatcher, TranslationInterface $translation) {
     $this->activeConfigStorage = $active_config_storage;
     $this->infoParser = $info_parser;
     $this->moduleHandler = $module_handler;
@@ -139,6 +150,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
     $this->configManager = $config_manager;
     $this->configDiff = $config_diff;
     $this->lock = $lock;
+    $this->state = $state;
     $this->typedConfigManager = $typed_config;
     $this->dispatcher = $dispatcher;
     $this->stringTranslation = $translation;
@@ -147,21 +159,9 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
   /**
    * {@inheritdoc}
    */
-  public function importExtension($extension, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY) {
-    if ($extension_dirs = $this->getExtensionDirectories($extension)) {
-      return $this->importExtensionDirectories($extension_dirs, $subdir);
-    }
-    else {
-      return FALSE;
-    }
-  }
-
-  /**
-   * {@inheritdoc}
-   */
-  public function importAll($subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY) {
-    if ($extension_dirs = $this->getAllExtensionDirectories()) {
-      return $this->importExtensionDirectories($extension_dirs, $subdir);
+  public function import($subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY, $force_unmanaged = FALSE) {
+    if ($extension_dirs = $this->getExtensionDirectories()) {
+      return $this->importExtensionDirectories($extension_dirs, $subdir, $force_unmanaged);
     }
     else {
       return FALSE;
@@ -175,13 +175,17 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    *   Array of source directories as keys, mapped to their project names.
    * @param string $subdir
    *   The sub-directory of configuration to import.
+   * @param bool $force_unmanaged
+   *   Without this option, any config listed as 'unmanaged' is only considered
+   *   when it has not previously been created. Set this option to overwrite any
+   *   such config even if it has been previously created.
    *
    * @return bool
    *   TRUE if the operation succeeded; FALSE if the configuration changes could
    *   not be found to import.
    */
-  protected function importExtensionDirectories($source_dirs, $subdir) {
-    if ($storage_comparer = $this->getStorageComparer($source_dirs, $subdir)) {
+  protected function importExtensionDirectories($source_dirs, $subdir, $force_unmanaged) {
+    if ($storage_comparer = $this->getStorageComparer($source_dirs, $subdir, $force_unmanaged)) {
       return $this->importFromComparer($storage_comparer);
     }
     else {
@@ -230,26 +234,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
   /**
    * {@inheritdoc}
    */
-  public function getExtensionDirectories($extension) {
-    $source_dirs = array();
-    if (!is_array($extension)) {
-      $extension = array_map('trim', explode(',', $extension));
-    }
-    foreach ($extension as $extension_name) {
-      // Determine the type of extension we're dealing with.
-      if ($type = $this->getExtensionType($extension_name)) {
-        if ($extension_path = drupal_get_path($type, $extension_name)) {
-          $source_dirs[$extension_path] = $extension_name;
-        }
-      }
-    }
-    return $source_dirs;
-  }
-
-  /**
-   * {@inheritdoc}
-   */
-  public function getAllExtensionDirectories() {
+  public function getExtensionDirectories() {
     $source_dirs = array();
     // Import configuration from any enabled extensions with the cm_config_tools
     // key in their .info.yml file.
@@ -269,9 +254,9 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
   /**
    * {@inheritdoc}
    */
-  public function getStorageComparer(array $source_dirs, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY) {
+  public function getStorageComparer(array $source_dirs, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY, $force_unmanaged = FALSE) {
     $storage_comparer = new ConfigDiffStorageComparer(
-      $this->getSourceStorageWrapper($source_dirs, $subdir),
+      $this->getSourceStorageWrapper($source_dirs, $subdir, $force_unmanaged),
       $this->activeConfigStorage,
       $this->configDiff
     );
@@ -297,17 +282,21 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    * @param string $subdir
    *   The sub-directory of configuration to import. Defaults to
    *   "config/install".
+   * @param bool $force_unmanaged
+   *   Optional. Without this option, any config listed as 'unmanaged' is only
+   *   considered when it has not previously been created. Set this option to
+   *   overwrite any such config even if it has been previously created.
    *
    * @return StorageReplaceDataMappedWrapper
    *   The source storage, wrapped to allow replacing specific configuration.
    *
    * @throws ExtensionConfigConflictException
    */
-  protected function getSourceStorageWrapper(array $source_dirs, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY) {
+  protected function getSourceStorageWrapper(array $source_dirs, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY, $force_unmanaged = FALSE) {
     $source_storage = new StorageReplaceDataMappedWrapper($this->activeConfigStorage);
 
     foreach ($source_dirs as $source_dir => $extension_name) {
-      $unmanaged = $this->getExtensionInfo($extension_name, 'unmanaged', array());
+      $unmanaged = $force_unmanaged ? array() : $this->getExtensionInfo($extension_name, 'unmanaged', array());
       if (is_array($unmanaged)) {
         $unmanaged = array_flip($unmanaged);
       }
@@ -352,10 +341,20 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
     return $source_storage;
   }
 
+  /**
+   * Sort and filter dependency lists.
+   *
+   * Also changes input array to a simple indexed array list. This means the
+   * output can then be directly copied for use in an .info.yml file if the
+   * output format is YAML.
+   *
+   * @param array $dependencies
+   *   Array of config item dependencies.
+   *
+   * @return array
+   *   Sorted and filtered array of dependencies, keyed by dependency type..
+   */
   protected function sortAndFilterOutput($dependencies) {
-    // Sort and filter dependency lists, and finally change to simple indexed
-    // array lists. This means the output can then be directly copied for use
-    // in a .info.yml file if the output format is YAML.
     foreach (array_keys($dependencies) as $dependency_type) {
       if ($dependencies[$dependency_type]) {
         sort($dependencies[$dependency_type]);
@@ -373,35 +372,34 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    */
   public function getExtensionConfigDependencies($extension, $limit = NULL) {
     $dependencies = array();
-    $listed_config = $this->getExtensionInfo($extension, 'managed');
-    foreach ($listed_config as $key) {
-      $config_dependencies = $this->getConfigDependencies($key, $limit);
-      foreach ($config_dependencies as $dependency_type => $type_dependencies) {
-        if (!isset($dependencies[$dependency_type])) {
-          $dependencies[$dependency_type] = array();
+    $listed_config = $this->getExtensionInfo($extension, 'managed', array());
+    if ($listed_config && is_array($listed_config)) {
+      foreach ($listed_config as $config_name) {
+        $config_dependencies = $this->getConfigDependencies($config_name, $limit);
+        foreach ($config_dependencies as $dependency_type => $type_dependencies) {
+          if (!isset($dependencies[$dependency_type])) {
+            $dependencies[$dependency_type] = array();
+          }
+          $dependencies[$dependency_type] += $type_dependencies;
         }
-        $dependencies[$dependency_type] += $type_dependencies;
       }
+
+      // Exclude 'core' and the specified extension from the full list.
+      unset($dependencies['module']['core']);
+      unset($dependencies['module'][$extension]);
     }
-    // Exclude 'core' and the specified extension from the full list.
-    unset($dependencies['module']['core']);
-    unset($dependencies['module'][$extension]);
     return $this->sortAndFilterOutput($dependencies);
   }
 
   /**
-   * @param $name
-   *   The config key to find the dependencies of.
-   * @param null $recursion_limit
-   *   Optionally limit the levels of recursion.
-   * @return mixed
+   * {@inheritdoc}
    */
-  public function getConfigDependencies($name, $recursion_limit = NULL) {
+  public function getConfigDependencies($config_name, $recursion_limit = NULL) {
     static $recursive_iterations = 0;
     static $checked = array();
 
-    if (!isset($checked[$name])) {
-      $config_dependencies = \Drupal::config($name)->get('dependencies');
+    if (!isset($checked[$config_name])) {
+      $config_dependencies = $this->configManager->getConfigFactory()->get($config_name)->get('dependencies');
       if ($config_dependencies && is_array($config_dependencies)) {
         foreach ($config_dependencies as $dependency_type => $type_dependencies) {
           // Use associative array to avoid duplicates.
@@ -431,19 +429,27 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
         $config_dependencies = array();
       }
 
-      // Config provider is an implied module dependency.
-      $config_provider = substr($name, 0, strpos($name, '.'));
-      $config_dependencies['module'][$config_provider] = $config_provider;
+      // Config provider is an implied dependency. It can either be on core,
+      // which we do not need to list, a theme, or a module/profile (which are
+      // both treated as a 'module' dependency).
+      $config_provider = substr($config_name, 0, strpos($config_name, '.'));
+      if ($config_provider != 'core') {
+        $provider_type = $this->getExtensionType($config_provider, TRUE);
+        if ($provider_type !== 'theme') {
+          $provider_type = 'module';
+        }
+        $config_dependencies[$provider_type][$config_provider] = $config_provider;
+      }
 
-      $checked[$name] = $config_dependencies;
+      $checked[$config_name] = $config_dependencies;
     }
 
-    return $checked[$name];
+    return $checked[$config_name];
   }
 
 
   /**
-   * Suggest config to manage, based on currently managed config.
+   * Suggest config to manage, based on an extension's currently managed config.
    *
    * For the config listed in a projects .info.yml, find other config that is
    * dependant upon it, but which is not:
@@ -453,37 +459,35 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    *
    * @param string $extension
    *   The machine name of the project to find suggested config for.
+   * @param int $recursion_limit
+   *   Optionally limit the levels of recursion.
+   *
    * @return array
    *   An array of config suggestions.
    */
   public function getExtensionConfigSuggestions($extension, $recursion_limit = NULL) {
     $dependants = array();
-    $listed_config = $this->getExtensionInfo($extension, 'managed');
-    $dependency_manager = \Drupal::service('config.manager')
-      ->getConfigDependencyManager();
-    foreach ($listed_config as $key) {
-      // Recursively fetch configuration entities that are dependent on this
-      // configuration entity (i.e. reverse dependencies).
-      $dependants += $this->getConfigSuggestions($key, $dependency_manager, $recursion_limit);
+    $listed_config = $this->getExtensionInfo($extension, 'managed', array());
+    if ($listed_config && is_array($listed_config)) {
+      $dependency_manager = $this->configManager->getConfigDependencyManager();
+      foreach ($listed_config as $config_name) {
+        // Recursively fetch configuration entities that are dependants of this
+        // configuration entity (i.e. reverse dependencies).
+        $dependants += $this->getConfigSuggestions($config_name, $dependency_manager, $recursion_limit);
+      }
     }
     return $this->sortAndFilterOutput(array('config' => $dependants));
   }
 
   /**
-   * @param $key
-   *   The config key to find the dependencies of.
-   * @param $dependency_manager
-   *
-   * @param null $recursion_limit
-   * @return mixed
+   * {@inheritdoc}
    */
-  public function getConfigSuggestions($key, $dependency_manager, $recursion_limit = NULL) {
+  public function getConfigSuggestions($config_name, ConfigDependencyManager $dependency_manager, $recursion_limit = NULL) {
     static $recursive_iterations = 0;
     static $checked = array();
 
-    if (!isset($checked[$key])) {
-      /** @var Drupal\Core\Config\Entity\ConfigDependencyManager $dependency_manager */
-      if ($dependants = array_keys($dependency_manager->getDependentEntities('config', $key))) {
+    if (!isset($checked[$config_name])) {
+      if ($dependants = array_keys($dependency_manager->getDependentEntities('config', $config_name))) {
         // Use associative array to avoid duplicates.
         $dependants = array_combine($dependants, $dependants);
 
@@ -499,38 +503,25 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
         $recursive_iterations--;
       }
 
-      $checked[$key] = $dependants;
+      $checked[$config_name] = $dependants;
     }
 
-    return $checked[$key];
+    return $checked[$config_name];
   }
 
   /**
    * {@inheritdoc}
    */
-  public function addToManagedConfig($extension, $config_keys) {
-
-  }
-
-
-  /**
-   * {@inheritdoc}
-   */
-  public function exportExtension($extension, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY, $all = FALSE, $fully_normalize = FALSE) {
-    if ($extension_dirs = $this->getExtensionDirectories($extension)) {
-      return $this->exportExtensionDirectories($extension_dirs, $subdir, $all, $fully_normalize);
-    }
-    else {
-      return FALSE;
-    }
+  public function addToManagedConfig($extension, $config_names) {
+    // @TODO
   }
 
   /**
    * {@inheritdoc}
    */
-  public function exportAll($subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY, $all = FALSE, $fully_normalize = FALSE) {
-    if ($extension_dirs = $this->getAllExtensionDirectories()) {
-      return $this->exportExtensionDirectories($extension_dirs, $subdir, $all, $fully_normalize);
+  public function export($subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY, $force_unmanaged = FALSE, $fully_normalize = FALSE) {
+    if ($extension_dirs = $this->getExtensionDirectories()) {
+      return $this->exportExtensionDirectories($extension_dirs, $subdir, $force_unmanaged, $fully_normalize);
     }
     else {
       return FALSE;
@@ -544,12 +535,12 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    *   Array of target directories as keys, mapped to their project names.
    * @param string $subdir
    *   The sub-directory of configuration to import.
-   * @param bool $all
+   * @param bool $force_unmanaged
    *   When set to FALSE, any config listed as 'unmanaged' is only exported
    *   when it has not previously been exported. Set to TRUE to overwrite any
    *   such config even if it has been previously exported.
    * @param bool $fully_normalize
-   *   Set to TRUE to sort configuration keys when exporting, and strip any
+   *   Set to TRUE to sort configuration names when exporting, and strip any
    *   empty arrays. This ensures more reliability when comparing between source
    *   and target config but usually means unnecessary changes.
    *
@@ -561,8 +552,9 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    * @see drush_config_devel_get_config()
    * @see drush_config_devel_process_config()
    */
-  protected function exportExtensionDirectories($extension_dirs, $subdir, $all, $fully_normalize) {
+  protected function exportExtensionDirectories($extension_dirs, $subdir, $force_unmanaged, $fully_normalize) {
     $errors = [];
+    $config_factory = $this->configManager->getConfigFactory();
 
     foreach ($extension_dirs as $source_dir => $extension_name) {
       // Determine the type of extension we're dealing with.
@@ -583,13 +575,13 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
           try {
             $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
             foreach ($info as $name) {
-              $config = \Drupal::config($name);
+              $config = $config_factory->get($name);
               if ($data = $config->get()) {
                 $existing_export = $source_dir_storage->read($name);
 
                 // Skip existing config that is listed as 'unmanaged' unless the
-                // 'all' option was passed.
-                if ($existing_export && isset($unmanaged[$name]) && !$all) {
+                // 'force unmanaged' option was passed.
+                if ($existing_export && isset($unmanaged[$name]) && !$force_unmanaged) {
                   continue;
                 }
 
@@ -673,7 +665,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
       // system_rebuild_module_data() and
       // \Drupal\Core\Extension\ThemeHandlerInterface::rebuildThemeData().
       foreach (['module', 'theme'] as $candidate) {
-        if (\Drupal::state()->get('system.' . $candidate . '.files', array())) {
+        if ($this->state->get('system.' . $candidate . '.files', array())) {
           $type = $candidate;
           break;
         }
@@ -686,7 +678,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
   /**
    * {@inheritdoc}
    */
-  public static function normalizeConfig($name, $config, $sort_and_filter = TRUE, $ignore = array('uuid', '_core')) {
+  public static function normalizeConfig($config_name, $config, $sort_and_filter = TRUE, $ignore = array('uuid', '_core')) {
     // Remove "ignore" elements.
     foreach ($ignore as $element) {
       unset($config[$element]);
@@ -698,11 +690,11 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
         // Image style effects are a special case, since they have to use UUIDs
         // as their keys, so remove that from the ignore list. Remove this once
         // core issue https://www.drupal.org/node/2247257 is fixed.
-        if (isset($value['uuid']) && $value['uuid'] === $key && in_array('uuid', $ignore) && preg_match('#^image\.style\.[^.]+\.effects#', $name)) {
-          $new = static::normalizeConfig($name . '.' . $key, $value, $sort_and_filter, array_diff($ignore, array('uuid')));
+        if (isset($value['uuid']) && $value['uuid'] === $key && in_array('uuid', $ignore) && preg_match('#^image\.style\.[^.]+\.effects#', $config_name)) {
+          $new = static::normalizeConfig($config_name . '.' . $key, $value, $sort_and_filter, array_diff($ignore, array('uuid')));
         }
         else {
-          $new = static::normalizeConfig($name . '.' . $key, $value, $sort_and_filter, $ignore);
+          $new = static::normalizeConfig($config_name . '.' . $key, $value, $sort_and_filter, $ignore);
         }
 
         if (count($new)) {

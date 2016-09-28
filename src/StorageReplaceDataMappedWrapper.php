@@ -34,7 +34,7 @@ class StorageReplaceDataMappedWrapper extends StorageReplaceDataWrapper {
   /**
    * Maps configuration name to the supplied source name.
    *
-   * @param $name
+   * @param string $name
    *   The configuration object name to map.
    * @param string $source
    *   The source of the data.
@@ -49,7 +49,7 @@ class StorageReplaceDataMappedWrapper extends StorageReplaceDataWrapper {
   /**
    * Gets the mapped source name for the supplied configuration name.
    *
-   * @param $name
+   * @param string $name
    *   The configuration object name.
    *
    * @return string|null
