@@ -508,7 +508,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
   /**
    * {@inheritdoc}
    */
-  public function addConfigKeysToManifest($extension, $config_keys) {
+  public function addToManagedConfig($extension, $config_keys) {
 
   }
 

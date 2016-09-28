@@ -131,7 +131,7 @@ interface ExtensionConfigHandlerInterface {
   public function getExtensionConfigSuggestions($extension);
 
   /**
-   * Adds the provided config keys to an extensions managed config.
+   * Adds the provided config to an extensions managed config.
    *
    * Add the config keys to an extensions .info.yml, under
    * cm_config_tools.managed
@@ -140,7 +140,7 @@ interface ExtensionConfigHandlerInterface {
    * @param $config_keys
    * @return mixed
    */
-  public function addConfigKeysToManifest($extension, $config_keys);
+  public function addToManagedConfig($extension, $config_keys);
 
   /**
    * Export configuration to extensions.
