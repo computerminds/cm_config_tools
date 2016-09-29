@@ -349,16 +349,22 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    * output format is YAML.
    *
    * @param array $dependencies
-   *   Array of config item dependencies.
+   *   Array of config item dependencies, keyed by dependency type.
+   * @param array $exclude
+   *   Array of config items to filter out, keyed by dependency type.
    *
    * @return array
-   *   Sorted and filtered array of dependencies, keyed by dependency type..
+   *   Sorted and filtered array of dependencies, keyed by dependency type.
    */
-  protected function sortAndFilterOutput($dependencies) {
+  protected function sortAndFilterOutput($dependencies, $exclude = []) {
     foreach (array_keys($dependencies) as $dependency_type) {
       if ($dependencies[$dependency_type]) {
+        if (isset($exclude[$dependency_type])) {
+          $dependencies[$dependency_type] = array_diff($dependencies[$dependency_type], $exclude[$dependency_type]);
+        }
+
         sort($dependencies[$dependency_type]);
-        $dependencies[$dependency_type] = array_values($dependencies[$dependency_type]);
+        $dependencies[$dependency_type] = array_values(array_filter($dependencies[$dependency_type]));
       }
       else {
         unset($dependencies[$dependency_type]);
@@ -467,16 +473,25 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    */
   public function getExtensionConfigSuggestions($extension, $recursion_limit = NULL) {
     $dependants = array();
+    $exclude = array();
     $listed_config = $this->getExtensionInfo($extension, 'managed', array());
     if ($listed_config && is_array($listed_config)) {
+      $exclude['config'] = $listed_config;
+
       $dependency_manager = $this->configManager->getConfigDependencyManager();
       foreach ($listed_config as $config_name) {
         // Recursively fetch configuration entities that are dependants of this
         // configuration entity (i.e. reverse dependencies).
         $dependants += $this->getConfigSuggestions($config_name, $dependency_manager, $recursion_limit);
       }
+
+      $unmanaged = $this->getExtensionInfo($extension, 'unmanaged', array());
+      if ($unmanaged && is_array($unmanaged)) {
+        $exclude['config'] = array_merge($exclude['config'], $unmanaged);
+      }
     }
-    return $this->sortAndFilterOutput(array('config' => $dependants));
+
+    return $this->sortAndFilterOutput(array('config' => $dependants), $exclude);
   }
 
   /**
