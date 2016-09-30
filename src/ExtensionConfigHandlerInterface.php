@@ -43,7 +43,7 @@ interface ExtensionConfigHandlerInterface {
    * Configuration should be imported from any enabled projects that contain a
    * 'cm_config_tools' key in their .info.yml files (even if it is empty).
    *
-   * @TODO Do we need somewhere to warn of unsupported behaviour if multipe
+   * @TODO Do we need somewhere to warn of unsupported behaviour if multiple
    * extensions with the cm_config_tools key are found?
    *
    * @return array
@@ -164,6 +164,8 @@ interface ExtensionConfigHandlerInterface {
    * Configuration should be exported to any enabled projects that contain a
    * 'cm_config_tools' key in their .info.yml files (even if it is empty).
    *
+   * @param bool $with_dependencies
+   *   Export configuration together with its dependencies.
    * @param string $subdir
    *   The sub-directory of configuration to import. Defaults to
    *   "config/install".
@@ -180,12 +182,12 @@ interface ExtensionConfigHandlerInterface {
    *   Array of any errors, keyed by extension names, FALSE if configuration
    *   changes could not be found to import, or TRUE on successful export.
    *
-   * @TODO Optionally (but by default) export dependencies, and suggest config
-   * dependants to export to (allowing opt-out of getting suggestions, and if
-   * possible allowing opt-in to export all dependants).
+   * @TODO Optionally suggest config dependants to export to (allowing opt-out
+   * of getting suggestions, and if possible allowing opt-in to export all
+   * dependants).
    * @TODO Support 'implicit' exporting of dependants.
    */
-  public function export($subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY, $force_unmanaged = FALSE, $fully_normalize = FALSE);
+  public function export($with_dependencies = TRUE, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY, $force_unmanaged = FALSE, $fully_normalize = FALSE);
 
   /**
    * Get cm_config_tools info from extension's .info.yml file.

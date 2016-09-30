@@ -534,9 +534,9 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
   /**
    * {@inheritdoc}
    */
-  public function export($subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY, $force_unmanaged = FALSE, $fully_normalize = FALSE) {
+  public function export($with_dependencies = TRUE, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY, $force_unmanaged = FALSE, $fully_normalize = FALSE) {
     if ($extension_dirs = $this->getExtensionDirectories()) {
-      return $this->exportExtensionDirectories($extension_dirs, $subdir, $force_unmanaged, $fully_normalize);
+      return $this->exportExtensionDirectories($extension_dirs, $with_dependencies, $subdir, $force_unmanaged, $fully_normalize);
     }
     else {
       return FALSE;
@@ -548,6 +548,8 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    *
    * @param array $extension_dirs
    *   Array of target directories as keys, mapped to their project names.
+   * @param bool $with_dependencies
+   *   Export configuration together with its dependencies.
    * @param string $subdir
    *   The sub-directory of configuration to import.
    * @param bool $force_unmanaged
@@ -567,7 +569,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    * @see drush_config_devel_get_config()
    * @see drush_config_devel_process_config()
    */
-  protected function exportExtensionDirectories($extension_dirs, $subdir, $force_unmanaged, $fully_normalize) {
+  protected function exportExtensionDirectories($extension_dirs, $with_dependencies = TRUE, $subdir, $force_unmanaged, $fully_normalize) {
     $errors = [];
     $config_factory = $this->configManager->getConfigFactory();
 
@@ -578,6 +580,15 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
         $info = $this->getExtensionInfo($extension_name, 'managed', array(), TRUE);
 
         if ($info && is_array($info)) {
+          // Include any config dependencies.
+          if ($with_dependencies) {
+            $dependencies = $this->getExtensionConfigDependencies($extension_name);
+            // @TODO Write module dependencies to .info.yml file?
+            if (!empty($dependencies['config'])) {
+              $info = array_merge($info, $dependencies['config']);
+            }
+          }
+
           // Exclude any unmanaged items.
           $unmanaged = $this->getExtensionInfo($extension_name, 'unmanaged', array(), TRUE);
           if ($unmanaged && is_array($unmanaged)) {

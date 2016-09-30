@@ -44,10 +44,13 @@ function cm_config_tools_drush_command() {
       'fully-normalize' => array(
         'description' => 'Sort keys within configuration items when exporting, and strip any empty arrays. This ensures more reliability when comparing between source and target config but usually means unnecessary changes.',
       ),
+      'skip-dependencies' => array(
+        'description' => 'Without this, config dependencies of the config to export are also exported (in order to ensure all dependencies can never be missing). But set this to avoid doing that, in which case you will need to ensure dependencies are met before imports/installs.',
+      ),
     ),
     'required-arguments' => FALSE,
     'examples' => array(
-      'drush cm-config-tools-export' => 'Write back configuration from the active storage, to any projects containing a \'cm_config_tools\' key in their .info.yml files.',
+      'drush cm-config-tools-export --skip-dependencies' => 'Write back configuration from the active storage, to any projects containing a \'cm_config_tools\' key in their .info.yml files, without any of that configuration\'s dependencies.',
     ),
     'aliases' => array('cmce'),
   );
@@ -87,8 +90,8 @@ function cm_config_tools_drush_command() {
     'aliases' => array('cmci'),
   );
 
-  // @TODO Add commands to get dependencies and suggest dependants. Optionally
-  // invoke them from drush_cm_config_tools_export(). See the @TODO note in
+  // @TODO Add command to suggest dependants. Optionally invoke it from
+  // drush_cm_config_tools_export(). See the @TODO note in
   // ExtensionConfigHandlerInterface::export() for options.
 
   return $items;
@@ -101,10 +104,11 @@ function drush_cm_config_tools_export() {
   $subdir = drush_get_option('subdir', InstallStorage::CONFIG_INSTALL_DIRECTORY);
   $force_unmanaged = drush_get_option('force-unmanaged', FALSE);
   $fully_normalize = drush_get_option('fully-normalize', FALSE);
+  $skip_dependencies = drush_get_option('skip-dependencies');
 
   /** @var \Drupal\cm_config_tools\ExtensionConfigHandler $helper */
   $helper = \Drupal::service('cm_config_tools');
-  $result = $helper->export($subdir, $force_unmanaged, $fully_normalize);
+  $result = $helper->export(!$skip_dependencies, $subdir, $force_unmanaged, $fully_normalize);
 
   if ($result === TRUE) {
     return drush_log(dt('Configuration successfully exported.'), LogLevel::SUCCESS);
