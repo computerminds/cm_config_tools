@@ -9,6 +9,7 @@ namespace Drupal\cm_config_tools;
 
 use Drupal\cm_config_tools\Exception\ExtensionConfigConflictException;
 use Drupal\cm_config_tools\Exception\ExtensionConfigLockedException;
+use Drupal\Component\Serialization\Yaml;
 use Drupal\config_update\ConfigDiffInterface;
 use Drupal\Core\Config\ConfigImporter;
 use Drupal\Core\Config\ConfigManagerInterface;
@@ -583,7 +584,22 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
           // Include any config dependencies.
           if ($with_dependencies) {
             $dependencies = $this->getExtensionConfigDependencies($extension_name);
-            // @TODO Write module dependencies to .info.yml file?
+
+            // Write module dependencies to .info.yml file.
+            if (!empty($dependencies['module'])) {
+              if ($type = $this->getExtensionType($extension_name, TRUE)) {
+                if ($extension_path = drupal_get_path($type, $extension_name)) {
+                  // Info parser service statically caches info files, so it does not
+                  // matter that file may already have been parsed by this class.
+                  $info_filename = $extension_path . '/' . $extension_name . '.info.yml';
+                  $parsed_info = Yaml::decode(file_get_contents($info_filename));
+                  $parsed_info['dependencies'] = array_values(array_unique(array_merge(array_values($parsed_info['dependencies']), $dependencies['module'])));
+                  sort($parsed_info['dependencies']);
+                  file_put_contents($info_filename, Yaml::encode($parsed_info));
+                }
+              }
+            }
+
             if (!empty($dependencies['config'])) {
               $info = array_unique(array_merge(array_values($info), $dependencies['config']));
             }
