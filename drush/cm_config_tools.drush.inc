@@ -171,6 +171,7 @@ function drush_cm_config_tools_import($extensions = NULL) {
  * @param array $extension_dirs
  */
 function drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY) {
+  /** @var \Drupal\cm_config_tools\ExtensionConfigHandler $helper */
   $helper = \Drupal::service('cm_config_tools');
 
   // Copy active storage to the temporary directory.
@@ -181,7 +182,7 @@ function drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs, 
     $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
     foreach ($source_dir_storage->listAll() as $name) {
       if ($data = $active_storage->read($name)) {
-        $data = $helper::normalize($data);
+        $data = $helper::normalizeConfig($name, $data);
         $temp_storage->write($name, $data);
       }
     }
@@ -199,7 +200,7 @@ function drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs, 
       $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
       foreach ($source_dir_storage->listAll() as $name) {
         if ($data = $source_storage->read($name)) {
-          $data = $helper::normalize($data);
+          $data = $helper::normalizeConfig($name, $data);
           $temp_storage->write($name, $data);
         }
       }
