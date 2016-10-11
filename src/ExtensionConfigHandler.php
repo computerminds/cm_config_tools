@@ -114,7 +114,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
   protected $dispatcher;
 
   /**
-   * Constructs a ConfigImporter.
+   * Constructs a ExtensionConfigHandler.
    *
    * @param \Drupal\Core\Config\StorageInterface $active_config_storage
    *   The active config storage.
@@ -525,6 +525,127 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
   }
 
   /**
+   * Add dependencies to an extension's .info.yml file.
+   *
+   * This does not just parse and encode YAML, because we want to preserve
+   * comments and empty lines. Instead it supports the expected 'normal' format
+   * of a Drupal extension's .info.yml file, finding the dependencies block and
+   * inserting the new dependencies. If the block has no comments or empty
+   * lines, and the existing dependencies are sorted, then the new dependencies
+   * will be merged and sorted in amongst them.
+   *
+   * @param string $info_filename
+   *   The info filename.
+   * @param string[] $dependencies
+   *   An array of module dependencies.
+   */
+  protected function addToExtensionDependencies($info_filename, $dependencies) {
+    $contents = file_get_contents($info_filename);
+
+    $contents = str_replace(array("\r\n", "\r"), "\n", $contents);
+    $lines = explode("\n", $contents);
+    $dependencies_row = NULL;
+
+    // Process in reverse, in case of duplicate keys (since the last value
+    // would 'win').
+    $reverse_lines = array_reverse($lines, TRUE);
+
+    if (strpos($contents, 'dependencies:') !== FALSE) {
+      $whitespace_chars = " \t\n\r\0\x0B";
+      $last_root_row = count($lines);
+      $plain_block = TRUE;
+      foreach ($reverse_lines as $i => $row) {
+        if ($row) {
+          // Trim any comment from the row.
+          $comment = strpos($row, '#');
+          if ($comment) {
+            $row = substr($row, 0, $comment-1);
+          }
+          elseif ($comment === 0) {
+            // This row is just a comment.
+            $plain_block = FALSE;
+            continue;
+          }
+
+          // Trim whitespace and braces to the right of the row.
+          $row = rtrim($row, $whitespace_chars . '{}');
+          if ($row) {
+            if (strpos($whitespace_chars, $row[0]) === FALSE) {
+              if ($row == 'dependencies:') {
+                // Dependencies row found.
+                $dependencies_row = $i;
+                break;
+              }
+              else {
+                // This is a new root value, reset the 'plain block' variable.
+                $plain_block = TRUE;
+                $last_root_row = $i;
+              }
+            }
+            // Else case: row contains a value, just not a root one.
+          }
+          else {
+            $plain_block = FALSE;
+          }
+        }
+        else {
+          $plain_block = FALSE;
+        }
+      }
+
+      // If there were no empty lines or comments within the dependencies
+      // block then the dependencies can be merged in nicely for sorting,
+      // except when the existing dependencies themslves are unsorted.
+      if (isset($dependencies_row) && $plain_block) {
+        $existing_dependencies = array();
+        $insert_before = $last_root_row;
+        for ($i = ($dependencies_row + 1); $i < $last_root_row; $i++) {
+          $row = ltrim($lines[$i], $whitespace_chars . '-');
+          $prev_row = $i - $dependencies_row - 2;
+          if (empty($existing_dependencies) || ($row > $existing_dependencies[$prev_row])) {
+            $existing_dependencies[] = $row;
+          }
+          else {
+            unset($insert_before);
+          }
+        }
+
+        if (isset($insert_before)) {
+          $dependencies = array_merge($dependencies, $existing_dependencies);
+        }
+      }
+    }
+
+    sort($dependencies);
+    $dependencies = '  - ' . implode("\n  - ", $dependencies);
+
+    if (isset($dependencies_row)) {
+      $insert_at = $dependencies_row + 1;
+      if (!isset($insert_before)) {
+        $insert_before = $insert_at;
+      }
+    }
+    else {
+      // Append to the file, but retaining any trailing whitespace.
+      $insert_at = count($lines);
+      foreach ($reverse_lines as $i => $row) {
+        if ($row) {
+          $row = trim($row);
+          if ($row) {
+            $insert_at = $i + 1;
+            break;
+          }
+        }
+      }
+      $insert_before = $insert_at;
+      $dependencies = "dependencies:\n" . $dependencies;
+    }
+
+    $lines = array_merge(array_slice($lines, 0, $insert_at), array($dependencies), array_slice($lines, $insert_before));
+    file_put_contents($info_filename, implode("\n", $lines));
+  }
+
+  /**
    * {@inheritdoc}
    */
   public function addToManagedConfig($extension, $config_names) {
@@ -583,7 +704,23 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
           // Include any config dependencies.
           if ($with_dependencies) {
             $dependencies = $this->getExtensionConfigDependencies($extension_name);
-            // @TODO Write module dependencies to .info.yml file?
+
+            // Write module dependencies to .info.yml file.
+            if (!empty($dependencies['module'])) {
+              if ($type = $this->getExtensionType($extension_name, TRUE)) {
+                if ($extension_path = drupal_get_path($type, $extension_name)) {
+                  // Info parser service statically caches info files, so it does not
+                  // matter that file may already have been parsed by this class.
+                  $info_filename = $extension_path . '/' . $extension_name .'.info.yml';
+                  $parsed_info = $this->infoParser->parse($info_filename);
+                  $parsed_info += ['dependencies' => []];
+                  if ($missing_dependencies = array_diff($dependencies['module'], $parsed_info['dependencies'])) {
+                    $this->addToExtensionDependencies($info_filename, $missing_dependencies);
+                  }
+                }
+              }
+            }
+
             if (!empty($dependencies['config'])) {
               $info = array_unique(array_merge(array_values($info), $dependencies['config']));
             }
