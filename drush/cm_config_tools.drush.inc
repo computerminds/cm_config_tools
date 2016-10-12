@@ -157,7 +157,7 @@ function drush_cm_config_tools_import($extensions = NULL) {
 
     // Use _drush_config_import() rather than import methods on $helper.
     if (drush_confirm(dt('Import configuration changes?'))) {
-      return drush_op('_drush_config_import', $storage_comparer);
+      return drush_op('_drush_cm_config_tools_import', $storage_comparer);
     }
   }
   else {
