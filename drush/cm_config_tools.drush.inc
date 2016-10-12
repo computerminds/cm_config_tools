@@ -6,6 +6,7 @@
  */
 
 use Drupal\cm_config_tools\ConfigDiffStorageComparer;
+use Drupal\cm_config_tools\Exception\ExtensionConfigLockedException;
 use Drupal\Core\Config\FileStorage;
 use Drupal\Core\Config\InstallStorage;
 use Drush\Log\LogLevel;
@@ -161,6 +162,33 @@ function drush_cm_config_tools_import($extensions = NULL) {
   }
   else {
     return drush_log(dt('There are no changes to import.'), LogLevel::OK);
+  }
+}
+
+/**
+ * Run the config import once confirmed and handle any errors.
+ */
+function _drush_cm_config_tools_import(ConfigDiffStorageComparer $storage_comparer) {
+  /** @var \Drupal\cm_config_tools\ExtensionConfigHandler $helper */
+  $helper = \Drupal::service('cm_config_tools');
+  try {
+    if ($errors = $helper->importFromComparer($storage_comparer)) {
+      // Return a negative result for UI purposes. We do not differentiate
+      // between an actual synchronization error and a failed lock, because
+      // concurrent synchronizations are an edge-case happening only when
+      // multiple developers or site builders attempt to do it without
+      // coordinating.
+      $message = 'The import failed due for the following reasons:' . "\n";
+      $message .= implode("\n", $errors);
+
+      return drush_set_error('config_import_fail', $message);
+    }
+    else {
+      drush_log('The configuration was imported successfully.', LogLevel::SUCCESS);
+    }
+  }
+  catch (ExtensionConfigLockedException $e) {
+    drush_log('Another request may be synchronizing configuration already.', LogLevel::WARNING);
   }
 }
 

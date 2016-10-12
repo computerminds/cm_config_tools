@@ -25,10 +25,8 @@ interface ExtensionConfigHandlerInterface {
    *   The sub-directory of configuration to import. Defaults to
    *   "config/install".
    *
-   * @return bool
-   *   TRUE if the operation succeeded; FALSE if the configuration changes could
-   *   not be found to import. May also throw exceptions if there is a problem
-   *   during saving the configuration.
+   * @return array
+   *   Return any error messages logged during the import.
    */
   public function importExtension($extension, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY);
 
@@ -42,10 +40,8 @@ interface ExtensionConfigHandlerInterface {
    *   The sub-directory of configuration to import. Defaults to
    *   "config/install".
    *
-   * @return bool
-   *   TRUE if the operation succeeded; FALSE if the configuration changes could
-   *   not be found to import. May also throw exceptions if there is a problem
-   *   during saving the configuration.
+   * @return array
+   *   Return any error messages logged during the import.
    */
   public function importAll($subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY);
 
@@ -101,8 +97,8 @@ interface ExtensionConfigHandlerInterface {
    * @param \Drupal\Core\Config\StorageComparerInterface $storage_comparer
    *   The storage comparer.
    *
-   * @return bool
-   *   TRUE if the operation succeeded.
+   * @return array
+   *   Return any error messages logged during the import.
    */
   public function importFromComparer(StorageComparerInterface $storage_comparer);
 
