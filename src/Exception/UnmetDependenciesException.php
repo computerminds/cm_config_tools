@@ -3,12 +3,13 @@
 namespace Drupal\cm_config_tools\Exception;
 
 use Drupal\Component\Render\FormattableMarkup;
+use Drupal\Core\Config\UnmetDependenciesException as CoreUnmetDependenciesException;
 use Drupal\Core\StringTranslation\TranslationInterface;
 
 /**
  * An exception thrown if configuration has unmet dependencies.
  */
-class UnmetDependenciesException extends ConfigException {
+class UnmetDependenciesException extends CoreUnmetDependenciesException {
 
   /**
    * A list of configuration objects that have unmet dependencies.
@@ -32,13 +33,6 @@ class UnmetDependenciesException extends ConfigException {
   protected $configObjects = [];
 
   /**
-   * The name of the extension that is being installed.
-   *
-   * @var string
-   */
-  protected $extension;
-
-  /**
    * Gets the list of configuration objects that have unmet dependencies.
    *
    * @return array
@@ -47,16 +41,6 @@ class UnmetDependenciesException extends ConfigException {
    */
   public function getConfigObjects() {
     return $this->configObjects;
-  }
-
-  /**
-   * Gets the name of the extension that is being installed.
-   *
-   * @return string
-   *   The name of the extension that is being installed.
-   */
-  public function getExtension() {
-    return $this->extension;
   }
 
   /**
@@ -86,7 +70,7 @@ class UnmetDependenciesException extends ConfigException {
    *   A list of configuration keyed by configuration name, with unmet
    *   dependencies as the value.
    *
-   * @return \Drupal\Core\Config\PreExistingConfigException
+   * @return \Drupal\cm_config_tools\Exception\UnmetDependenciesException
    */
   public static function create($extension, array $config_objects) {
     $message = new FormattableMarkup('Configuration objects provided by %extension have unmet dependencies: %config_names',
