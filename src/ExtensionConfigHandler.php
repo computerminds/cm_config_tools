@@ -10,6 +10,7 @@ namespace Drupal\cm_config_tools;
 use Drupal\cm_config_tools\Exception\ExtensionConfigConflictException;
 use Drupal\cm_config_tools\Exception\ExtensionConfigLockedException;
 use Drupal\config_update\ConfigDiffInterface;
+use Drupal\Core\Config\ConfigException;
 use Drupal\Core\Config\ConfigImporter;
 use Drupal\Core\Config\ConfigManagerInterface;
 use Drupal\Core\Config\Entity\ConfigDependencyManager;
@@ -180,16 +181,15 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    *   when it has not previously been created. Set this option to overwrite any
    *   such config even if it has been previously created.
    *
-   * @return bool
-   *   TRUE if the operation succeeded; FALSE if the configuration changes could
-   *   not be found to import.
+   * @return array
+   *   Return any error messages logged during the import.
    */
   protected function importExtensionDirectories($source_dirs, $subdir, $force_unmanaged) {
     if ($storage_comparer = $this->getStorageComparer($source_dirs, $subdir, $force_unmanaged)) {
       return $this->importFromComparer($storage_comparer);
     }
     else {
-      return FALSE;
+      return array($this->t('No configuration changes could not be found to import'));
     }
   }
 
@@ -199,10 +199,8 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    * @param \Drupal\Core\Config\StorageComparerInterface $storage_comparer
    *   The storage comparer.
    *
-   * @return bool
-   *   TRUE if the operation succeeded; May throw a
-   *   \Drupal\Core\Config\ConfigException if there is a problem during saving
-   *   the configuration.
+   * @return array
+   *   Return any error messages logged during the import.
    *
    * @throws ExtensionConfigLockedException
    *
@@ -225,9 +223,15 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
       throw new ExtensionConfigLockedException('Another request may be synchronizing configuration already.');
     }
     else {
-      // Calling code should handle any ConfigException.
-      $config_importer->import();
-      return TRUE;
+      try {
+        $config_importer->import();
+        return $config_importer->getErrors();
+      }
+      catch (ConfigException $e) {
+        $errors = $config_importer->getErrors();
+        $errors[] = $e->getMessage();
+        return $errors;
+      }
     }
   }
 
