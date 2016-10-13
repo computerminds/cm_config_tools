@@ -522,6 +522,8 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    * @see drupal_get_filename()
    */
   public function getExtensionType($extension, $disabled = FALSE) {
+    static $extension_data = [];
+
     $type = NULL;
     if ($this->moduleHandler->moduleExists($extension)) {
       $type = 'module';
@@ -536,8 +538,13 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
       // If still unknown, retrieve the file list prepared in state by
       // system_rebuild_module_data() and
       // \Drupal\Core\Extension\ThemeHandlerInterface::rebuildThemeData().
+      $state = \Drupal::state();
       foreach (['module', 'theme'] as $candidate) {
-        if (\Drupal::state()->get('system.' . $candidate . '.files', array())) {
+        if (!array_key_exists($candidate, $extension_data)) {
+          $extension_data[$candidate] = $state->get('system.' . $candidate . '.files', array());
+        }
+
+        if (isset($extension_data[$candidate][$extension])) {
           $type = $candidate;
           break;
         }
