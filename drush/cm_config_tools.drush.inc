@@ -201,30 +201,43 @@ function drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs, 
   $temp_dir = drush_cm_config_tools_tempdir('target');
   $temp_storage = new FileStorage($temp_dir);
   $active_storage = $storage_comparer->getTargetStorage();
-  foreach ($extension_dirs as $source_dir => $extension_name) {
-    $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
-    foreach ($source_dir_storage->listAll() as $name) {
-      if ($data = $active_storage->read($name)) {
-        $data = $helper::normalizeConfig($name, $data);
-        $temp_storage->write($name, $data);
+  foreach ($extension_dirs as $type => $type_extension_dirs) {
+    foreach ($type_extension_dirs as $source_dir => $extension_name) {
+      $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
+      foreach ($source_dir_storage->listAll() as $name) {
+        if ($data = $active_storage->read($name)) {
+          $data = $helper::normalizeConfig($name, $data);
+          $temp_storage->write($name, $data);
+        }
       }
     }
   }
 
+  $single_dir = FALSE;
   if (count($extension_dirs) == 1) {
-    drush_shell_exec('diff -x %s -u %s %s', '*.git', $temp_dir, key($extension_dirs));
+    $type_extension_dirs = reset($extension_dirs);
+    if ($type_extension_dirs && count($type_extension_dirs) == 1) {
+      $single_dir = TRUE;
+    }
+  }
+
+  if ($single_dir) {
+    $type_extension_dirs = reset($extension_dirs);
+    drush_shell_exec('diff -x %s -u %s %s', '*.git', $temp_dir, key($type_extension_dirs));
   }
   else {
     // Copy source storage to another temporary directory.
     $temp_source_dir = drush_cm_config_tools_tempdir('source');
     $temp_storage = new FileStorage($temp_source_dir);
     $source_storage = $storage_comparer->getSourceStorage();
-    foreach ($extension_dirs as $source_dir => $extension_name) {
-      $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
-      foreach ($source_dir_storage->listAll() as $name) {
-        if ($data = $source_storage->read($name)) {
-          $data = $helper::normalizeConfig($name, $data);
-          $temp_storage->write($name, $data);
+    foreach ($extension_dirs as $type => $type_extension_dirs) {
+      foreach ($type_extension_dirs as $source_dir => $extension_name) {
+        $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
+        foreach ($source_dir_storage->listAll() as $name) {
+          if ($data = $source_storage->read($name)) {
+            $data = $helper::normalizeConfig($name, $data);
+            $temp_storage->write($name, $data);
+          }
         }
       }
     }

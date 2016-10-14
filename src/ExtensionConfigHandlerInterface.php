@@ -44,11 +44,15 @@ interface ExtensionConfigHandlerInterface {
    * @TODO Do we need somewhere to warn of unsupported behaviour if multiple
    * extensions with the cm_config_tools key are found?
    *
+   * @param bool $disabled
+   *   Optionally check for disabled modules and themes too.
+   *
    * @return array
-   *   Array of directories of extensions to import from, mapped to their
-   *   project names.
+   *   Array of extension types ('module', 'theme', 'profile'), mapped to arrays
+   *   of directories of extensions to import from, mapped to their project
+   *   names.
    */
-  public function getExtensionDirectories();
+  public function getExtensionDirectories($disabled = FALSE);
 
   /**
    * Get the config storage comparer that will be used for importing.
@@ -60,7 +64,8 @@ interface ExtensionConfigHandlerInterface {
    * such as previewing changes.
    *
    * @param array $source_dirs
-   *   Array of source directories as keys, mapped to their project names.
+   *   Array of extension types mapped to arrays of source directories mapped to
+   *   their project names.
    * @param string $subdir
    *   The sub-directory of configuration to import. Defaults to
    *   "config/install".
@@ -94,11 +99,15 @@ interface ExtensionConfigHandlerInterface {
    *
    * @param string $extension
    *   The machine name of the project to get the config dependencies for.
+   * @param string $type
+   *   Optionally supply the type of extension.
+   * @param int $recursion_limit
+   *   Optionally limit the levels of recursion.
    *
    * @return array
    *   An array of things the extension depends on, keyed by dependency type.
    */
-  public function getExtensionConfigDependencies($extension);
+  public function getExtensionConfigDependencies($extension, $type = NULL, $recursion_limit = NULL);
 
   /**
    * Get the dependencies for a single config item.
@@ -190,6 +199,8 @@ interface ExtensionConfigHandlerInterface {
   /**
    * Get cm_config_tools info from extension's .info.yml file.
    *
+   * @param string $type
+   *   Type of extension; either 'module', 'theme' or 'profile'.
    * @param string $extension_name
    *   Extension name.
    * @param string $key
@@ -198,14 +209,12 @@ interface ExtensionConfigHandlerInterface {
    * @param mixed $default
    *   The default value to return when $key is specified and there is no value
    *   for it. Has no effect if $key is not specified.
-   * @param bool $disabled
-   *   Optionally check for disabled modules and themes too.
    *
    * @return bool|mixed
    *   If $key was not specified, just return TRUE or FALSE, depending on
    *   whether there is any cm_config_tools info for the extension at all.
    */
-  public function getExtensionInfo($extension_name, $key = NULL, $default = NULL, $disabled = FALSE);
+  public function getExtensionInfo($type, $extension_name, $key = NULL, $default = NULL);
 
   /**
    * Gets the type for the given extension.
