@@ -51,12 +51,15 @@ interface ExtensionConfigHandlerInterface {
    * @param string|array $extension
    *   The machine name of the project to import configuration from. Multiple
    *   projects can be specified, separated with commas, or as an array.
+   * @param bool $disabled
+   *   Optionally check for disabled modules and themes too.
    *
    * @return array
-   *   Array of directories of extensions to import from, mapped to their
-   *   project names.
+   *   Array of extension types ('module', 'theme', 'profile'), mapped to arrays
+   *   of directories of extensions to import from, mapped to their project
+   *   names.
    */
-  public function getExtensionDirectories($extension);
+  public function getExtensionDirectories($extension, $disabled = FALSE);
 
   /**
    * Get directories of all extensions that have a 'cm_config_tools' key.
@@ -64,11 +67,15 @@ interface ExtensionConfigHandlerInterface {
    * Configuration should be imported from any enabled projects that contain a
    * 'cm_config_tools' key in their .info.yml files (even if it is empty).
    *
+   * @param bool $disabled
+   *   Optionally check for disabled modules and themes too.
+   *
    * @return array
-   *   Array of directories of extensions to import from, mapped to their
-   *   project names.
+   *   Array of extension types ('module', 'theme', 'profile'), mapped to arrays
+   *   of directories of extensions to import from, mapped to their project
+   *   names.
    */
-  public function getAllExtensionDirectories();
+  public function getAllExtensionDirectories($disabled = FALSE);
 
   /**
    * Get the config storage comparer that will be used for importing.
@@ -80,7 +87,8 @@ interface ExtensionConfigHandlerInterface {
    * such as previewing changes.
    *
    * @param array $source_dirs
-   *   Array of source directories as keys, mapped to their project names.
+   *   Array of extension types mapped to arrays of source directories mapped to
+   *   their project names.
    * @param string $subdir
    *   The sub-directory of configuration to import. Defaults to
    *   "config/install".
@@ -153,6 +161,8 @@ interface ExtensionConfigHandlerInterface {
   /**
    * Get cm_config_tools info from extension's .info.yml file.
    *
+   * @param string $type
+   *   Type of extension; either 'module', 'theme' or 'profile'.
    * @param string $extension_name
    *   Extension name.
    * @param string $key
@@ -172,7 +182,7 @@ interface ExtensionConfigHandlerInterface {
    *   If $key was not specified, just return TRUE or FALSE, depending on
    *   whether there is any cm_config_tools info for the extension at all.
    */
-  public function getExtensionInfo($extension_name, $key = NULL, $default = NULL, $parent = 'cm_config_tools', $disabled = FALSE);
+  public function getExtensionInfo($type, $extension_name, $key = NULL, $default = NULL, $parent = 'cm_config_tools');
 
   /**
    * Gets the type for the given extension.
