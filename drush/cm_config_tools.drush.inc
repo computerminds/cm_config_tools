@@ -312,7 +312,7 @@ function drush_cm_config_tools_preview_table(ConfigDiffStorageComparer $storage_
   }
 
   $rows = array();
-  $rows[] = array('Provded by', 'Config', 'Operation');
+  $rows[] = array('Provided by', 'Config', 'Operation');
   foreach ($storage_comparer->getChangelist() as $change => $configs) {
     switch ($change) {
       case 'delete':
