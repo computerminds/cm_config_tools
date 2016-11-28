@@ -257,9 +257,23 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
       $extensions['theme'] = $this->themeHandler->listInfo();
     }
 
+    $extension_data['module'] = system_rebuild_module_data();
+    $extension_data['theme'] = $this->themeHandler->rebuildThemeData();
+
     foreach ($extensions as $type => $type_extensions) {
-      foreach ($type_extensions as $extension_name => $extension) {
+      // Sort the extensions list by their weights (reverse), as their
+      // installers would do.
+      // @see \Drupal\Core\Extension\ModuleInstaller::install()
+      // @see \Drupal\Core\Extension\ThemeInstaller::install()
+      $names = array_keys($type_extensions);
+      $names = array_map(function ($extension_name) use ($extension_data, $type) {
+        return $extension_data[$type][$extension_name]->sort;
+      }, array_combine($names, $names));
+      arsort($names);
+
+      foreach ($names as $extension_name => $extension_weight) {
         if ($this->getExtensionInfo($type, $extension_name)) {
+          $extension = $type_extensions[$extension_name];
           if ($extension instanceof Extension) {
             $source_dirs[$type][$extension->getPath()] = $extension_name;
           }
@@ -330,14 +344,17 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
 
         $file_storage = new FileStorage($source_dir . '/' . $subdir);
         foreach ($file_storage->listAll() as $name) {
-          if ($mapped = $source_storage->getMapping($name)) {
-            throw new ExtensionConfigConflictException("Could not import configuration because the configuration item '$name' is found in both the '$extension_name' and '$mapped' extensions.");
-          }
-
           // Replace data if it is not listed as unmanaged (i.e. should only be
           // installed once), or does not yet exist.
-          $source_storage->map($name, $extension_name);
           if (!isset($unmanaged[$name]) || !$source_storage->exists($name)) {
+            if ($mapped = $source_storage->getMapping($name)) {
+              throw new ExtensionConfigConflictException("Could not import configuration because the configuration item '$name' is found in both the '$extension_name' and '$mapped' extensions.");
+            }
+
+            // @TODO Any existing unmanaged config will not be mapped so it
+            // could be provided by another extension that manages it (e.g. as a
+            // dependency) or deleted by another extension.
+            $source_storage->map($name, $extension_name);
             $data = $file_storage->read($name);
             $source_storage->replaceData($name, $data);
           }
@@ -401,14 +418,55 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
   /**
    * {@inheritdoc}
    */
-  public function getExtensionConfigDependencies($extension, $type = NULL, $recursion_limit = NULL) {
+  public function getExtensionConfigDependencies($extension, $type = NULL, $all = TRUE, $recursion_limit = NULL) {
     if (!isset($type)) {
       $type = $this->getExtensionType($extension, TRUE);
     }
 
     $dependencies = array();
+    $exclude = array(
+      $type => array(
+        $extension => $extension,
+      ),
+    );
+
     $listed_config = $this->getExtensionInfo($type, $extension, 'managed', array());
     if ($listed_config && is_array($listed_config)) {
+      $listed_config = array_values($listed_config);
+      $exclude['config'] = array_combine($listed_config, $listed_config);
+
+      if (!$all) {
+        if ($type === 'theme') {
+          $extension_data = $this->themeHandler->rebuildThemeData();
+        }
+        else {
+          $extension_data = system_rebuild_module_data();
+        }
+
+        // Exclude any managed config in extensions using cm_config_tools from
+        // the dependencies list, since those will already be exported. Also
+        // exclude any extensions already listed as dependencies, and all their
+        // dependencies (direct or indirect).
+        if (isset($extension_data[$extension]->requires)) {
+          $extension_requirements = array_keys($extension_data[$extension]->requires);
+          $exclude[$type] += array_combine($extension_requirements, $extension_requirements);
+          foreach ($extension_requirements as $extension_dependency) {
+            $dependency_type = $this->getExtensionType($extension_dependency, TRUE);
+            if ($this->getExtensionInfo($dependency_type, $extension_dependency)) {
+              $file_storage = new FileStorage($extension_data[$extension_dependency]->getPath() . '/' . InstallStorage::CONFIG_INSTALL_DIRECTORY);
+              if ($dependency_managed_config = $file_storage->listAll()) {
+                // Unmanaged items could be changed, so we have to export those.
+                $unmanaged = $this->getExtensionInfo($dependency_type, $extension_dependency, 'unmanaged');
+                if ($unmanaged && is_array($unmanaged)) {
+                  $dependency_managed_config = array_diff($dependency_managed_config, array_values($unmanaged));
+                }
+                $exclude['config'] += array_combine($dependency_managed_config, $dependency_managed_config);
+              }
+            }
+          }
+        }
+      }
+
       foreach ($listed_config as $config_name) {
         $config_dependencies = $this->getConfigDependencies($config_name, $recursion_limit);
         foreach ($config_dependencies as $dependency_type => $type_dependencies) {
@@ -423,7 +481,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
       unset($dependencies['module']['core']);
       unset($dependencies['module'][$extension]);
     }
-    return $this->sortAndFilterOutput($dependencies);
+    return $this->sortAndFilterOutput($dependencies, $exclude);
   }
 
   /**
@@ -494,13 +552,17 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    *
    * @param string $extension
    *   The machine name of the project to find suggested config for.
+   * @param bool $all
+   *   By default, get all dependencies. Optionally set to FALSE to exclude
+   *   those that are already provided by listed dependencies of the extension
+   *   (whether they are directly or indirectly dependent). @TODO Implement $all == FALSE
    * @param int $recursion_limit
    *   Optionally limit the levels of recursion.
    *
    * @return array
    *   An array of config suggestions.
    */
-  public function getExtensionConfigSuggestions($extension, $recursion_limit = NULL) {
+  public function getExtensionConfigSuggestions($extension, $all = TRUE, $recursion_limit = NULL) {
     $dependants = array();
     $exclude = array();
     if (!$type = $this->getExtensionType($extension)) {
@@ -703,7 +765,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    * @param array $extension_dirs
    *   Array of extension types mapped to arrays of target directories mapped to
    *   their project names.
-   * @param bool $with_dependencies
+   * @param bool|int $with_dependencies
    *   Export configuration together with its dependencies.
    * @param string $subdir
    *   The sub-directory of configuration to import.
@@ -737,18 +799,15 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
         if ($info && is_array($info)) {
           // Include any config dependencies.
           if ($with_dependencies) {
-            $dependencies = $this->getExtensionConfigDependencies($extension_name, $type);
+            $dependencies = $this->getExtensionConfigDependencies($extension_name, $type, ($with_dependencies !== ExtensionConfigHandlerInterface::WITH_DEPENDENCIES_NOT_PROVIDED));
 
-            // Write module dependencies to .info.yml file.
-            if (!empty($dependencies['module'])) {
-              if ($extension_path = drupal_get_path($type, $extension_name)) {
-                // Info parser service statically caches info files, so it does
-                // not matter that file may already have been parsed by this
-                // class.
-                $info_filename = $extension_path . '/' . $extension_name .'.info.yml';
-                $parsed_info = $this->infoParser->parse($info_filename);
-                $parsed_info += ['dependencies' => []];
-                if ($missing_dependencies = array_diff($dependencies['module'], $parsed_info['dependencies'])) {
+            // Write module dependencies to .info.yml file. Themes cannot depend
+            // on modules, so skip this for them.
+            if (!empty($dependencies['module']) && $type !== 'theme') {
+              $module_data = system_rebuild_module_data();
+              if (isset($module_data[$extension_name])) {
+                if ($missing_dependencies = array_diff($dependencies['module'], array_keys($module_data[$extension_name]->requires))) {
+                  $info_filename = $module_data[$extension_name]->getPathname();
                   $this->addToExtensionDependencies($info_filename, $missing_dependencies);
                   $files_written[$extension_name][] = $info_filename;
                 }
@@ -785,6 +844,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
                 if (!$existing_export || !$this->configDiff->same($data, $existing_export)) {
                   // @TODO Config to export could be differently sorted to
                   // an existing export, which is just unnecessary change.
+                  // ... oh, except views which actually relies on keys' order.
                   $data = static::normalizeConfig($name, $data, $fully_normalize);
                   $source_dir_storage->write($name, $data);
                   $files_written[$extension_name][] = $name;
@@ -817,7 +877,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
     if ($extension_path = drupal_get_path($type, $extension_name)) {
       // Info parser service statically caches info files, so it does not
       // matter that file may already have been parsed by this class.
-      $info_filename = $extension_path . '/' . $extension_name .'.info.yml';
+      $info_filename = $extension_path . '/' . $extension_name . '.info.yml';
       $info = $this->infoParser->parse($info_filename);
 
       if ($key) {

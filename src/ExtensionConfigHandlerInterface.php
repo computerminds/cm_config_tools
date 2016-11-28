@@ -17,6 +17,12 @@ use Drupal\Core\Config\StorageComparerInterface;
 interface ExtensionConfigHandlerInterface {
 
   /**
+   * Flag for exporting config with their dependencies, except those already
+   * provided by any of the extension's dependencies.
+   */
+  const WITH_DEPENDENCIES_NOT_PROVIDED = -1;
+
+  /**
    * Import configuration from all extensions for this workflow.
    *
    * Configuration should be imported from any enabled projects that contain a
@@ -48,9 +54,10 @@ interface ExtensionConfigHandlerInterface {
    *   Optionally check for disabled modules and themes too.
    *
    * @return array
-   *   Array of extension types ('module', 'theme', 'profile'), mapped to arrays
-   *   of directories of extensions to import from, mapped to their project
-   *   names.
+   *   Array of extension types ('module', 'theme'), mapped to arrays of
+   *   directories of extensions to import from, mapped to their project names.
+   *   Each array should be sorted with most dependent extensions last, to allow
+   *   for easier use where extensions need processing in dependency order.
    */
   public function getExtensionDirectories($disabled = FALSE);
 
@@ -101,13 +108,17 @@ interface ExtensionConfigHandlerInterface {
    *   The machine name of the project to get the config dependencies for.
    * @param string $type
    *   Optionally supply the type of extension.
+   * @param bool $all
+   *   By default, get all dependencies. Optionally set to FALSE to exclude
+   *   those that are already provided by listed dependencies of the extension
+   *   (whether they are directly or indirectly dependent).
    * @param int $recursion_limit
    *   Optionally limit the levels of recursion.
    *
    * @return array
    *   An array of things the extension depends on, keyed by dependency type.
    */
-  public function getExtensionConfigDependencies($extension, $type = NULL, $recursion_limit = NULL);
+  public function getExtensionConfigDependencies($extension, $type = NULL, $all = TRUE, $recursion_limit = NULL);
 
   /**
    * Get the dependencies for a single config item.
@@ -171,8 +182,10 @@ interface ExtensionConfigHandlerInterface {
    * Configuration should be exported to any enabled projects that contain a
    * 'cm_config_tools' key in their .info.yml files (even if it is empty).
    *
-   * @param bool $with_dependencies
-   *   Export configuration together with its dependencies.
+   * @param bool|int $with_dependencies
+   *   Export configuration together with its dependencies. Can take the special
+   *   value -1 to smartly export dependencies, so those provided by other
+   *   dependencies that use cm_config_tools will not be exported again.
    * @param string $subdir
    *   The sub-directory of configuration to import. Defaults to
    *   "config/install".
@@ -192,7 +205,6 @@ interface ExtensionConfigHandlerInterface {
    * @TODO Optionally suggest config dependants to export to (allowing opt-out
    * of getting suggestions, and if possible allowing opt-in to export all
    * dependants).
-   * @TODO Support 'implicit' exporting of dependants.
    */
   public function export($with_dependencies = TRUE, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY, $force_unmanaged = FALSE, $fully_normalize = FALSE);
 

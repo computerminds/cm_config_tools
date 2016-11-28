@@ -7,6 +7,7 @@
 
 use Drupal\cm_config_tools\ConfigDiffStorageComparer;
 use Drupal\cm_config_tools\Exception\ExtensionConfigLockedException;
+use Drupal\cm_config_tools\ExtensionConfigHandlerInterface;
 use Drupal\Core\Config\FileStorage;
 use Drupal\Core\Config\InstallStorage;
 use Drush\Log\LogLevel;
@@ -45,13 +46,13 @@ function cm_config_tools_drush_command() {
       'fully-normalize' => array(
         'description' => 'Sort keys within configuration items when exporting, and strip any empty arrays. This ensures more reliability when comparing between source and target config but usually means unnecessary changes.',
       ),
-      'skip-dependencies' => array(
-        'description' => 'Without this, config dependencies of the config to export are also exported (in order to ensure all dependencies can never be missing). But set this to avoid doing that, in which case you will need to ensure dependencies are met before imports/installs.',
+      'include-dependencies' => array(
+        'description' => 'By default, config dependencies of the config to export are also exported (in order to ensure all dependencies can never be missing). But set this parameter to 0 to avoid doing that, in which case you will need to ensure dependencies are met before imports/installs. Set it to 1 in order to force config dependencies to be exported regardless of whether config is provided by other extensions working with cm_config_tools.',
       ),
     ),
     'required-arguments' => FALSE,
     'examples' => array(
-      'drush cm-config-tools-export --skip-dependencies' => 'Write back configuration from the active storage, to any projects containing a \'cm_config_tools\' key in their .info.yml files, without any of that configuration\'s dependencies.',
+      'drush cm-config-tools-export --include-dependencies=0' => 'Write back configuration from the active storage, to any projects containing a \'cm_config_tools\' key in their .info.yml files, without any of that configuration\'s dependencies.',
     ),
     'aliases' => array('cmce'),
   );
@@ -117,11 +118,11 @@ function drush_cm_config_tools_export() {
   $subdir = drush_get_option('subdir', InstallStorage::CONFIG_INSTALL_DIRECTORY);
   $force_unmanaged = drush_get_option('force-unmanaged', FALSE);
   $fully_normalize = drush_get_option('fully-normalize', FALSE);
-  $skip_dependencies = drush_get_option('skip-dependencies');
+  $include_dependencies = drush_get_option('include-dependencies', ExtensionConfigHandlerInterface::WITH_DEPENDENCIES_NOT_PROVIDED);
 
   /** @var \Drupal\cm_config_tools\ExtensionConfigHandler $helper */
   $helper = \Drupal::service('cm_config_tools');
-  $result = $helper->export(!$skip_dependencies, $subdir, $force_unmanaged, $fully_normalize);
+  $result = $helper->export($include_dependencies, $subdir, $force_unmanaged, $fully_normalize);
 
   if ($result === TRUE) {
     return drush_log(dt('Configuration successfully exported.'), LogLevel::SUCCESS);
