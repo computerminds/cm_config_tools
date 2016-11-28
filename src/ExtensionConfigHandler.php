@@ -502,7 +502,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
         // Recurse to find sub-dependencies.
         if (isset($config_dependencies['config'])) {
           $recursive_iterations++;
-          if ($recursion_limit && $recursive_iterations < $recursion_limit) {
+          if (!$recursion_limit || $recursive_iterations < $recursion_limit) {
             foreach ($config_dependencies['config'] as $dependency) {
               $sub_dependencies = $this->getConfigDependencies($dependency, $recursion_limit);
 
@@ -602,7 +602,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
         $dependants = array_combine($dependants, $dependants);
 
         $recursive_iterations++;
-        if ($recursion_limit && $recursive_iterations < $recursion_limit) {
+        if (!$recursion_limit || $recursive_iterations < $recursion_limit) {
           $base_dependants = $dependants;
           foreach ($base_dependants as $dependant) {
             if ($sub_dependants = $this->getConfigSuggestions($dependant, $dependency_manager, $recursion_limit)) {
