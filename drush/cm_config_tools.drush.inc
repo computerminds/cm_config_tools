@@ -156,7 +156,7 @@ function drush_cm_config_tools_import() {
   if ($extension_dirs && ($storage_comparer = $helper->getStorageComparer($extension_dirs, $subdir, $force_unmanaged))) {
     if ($preview = drush_get_option('preview', 'table')) {
       if ($preview == 'diff') {
-        drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs, $subdir);
+        drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs);
       }
       else {
         drush_cm_config_tools_preview_table($storage_comparer);
@@ -206,7 +206,7 @@ function _drush_cm_config_tools_import(ConfigDiffStorageComparer $storage_compar
  * @param \Drupal\Core\Config\StorageComparerInterface $storage_comparer
  * @param array $extension_dirs
  */
-function drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY) {
+function drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs) {
   /** @var \Drupal\cm_config_tools\ExtensionConfigHandler $helper */
   $helper = \Drupal::service('cm_config_tools');
 
@@ -216,8 +216,10 @@ function drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs, 
   $active_storage = $storage_comparer->getTargetStorage();
   foreach ($extension_dirs as $type => $type_extension_dirs) {
     foreach ($type_extension_dirs as $source_dir => $extension_name) {
-      $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
-      foreach ($source_dir_storage->listAll() as $name) {
+      $info = $helper->getExtensionInfo($type, $extension_name);
+      $importable = $info['managed'] + $info['unmanaged'] + $info['implicit'];
+
+      foreach ($importable as $name) {
         if ($data = $active_storage->read($name)) {
           $data = $helper::normalizeConfig($name, $data);
           $temp_storage->write($name, $data);
@@ -245,8 +247,10 @@ function drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs, 
     $source_storage = $storage_comparer->getSourceStorage();
     foreach ($extension_dirs as $type => $type_extension_dirs) {
       foreach ($type_extension_dirs as $source_dir => $extension_name) {
-        $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
-        foreach ($source_dir_storage->listAll() as $name) {
+        $info = $helper->getExtensionInfo($type, $extension_name, NULL);
+        $importable = $info['managed'] + $info['unmanaged'] + $info['implicit'];
+
+        foreach ($importable as $name) {
           if ($data = $source_storage->read($name)) {
             $data = $helper::normalizeConfig($name, $data);
             $temp_storage->write($name, $data);

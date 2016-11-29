@@ -118,7 +118,7 @@ class ConfigInstaller implements ConfigInstallerInterface {
     // is explicitly allowed to override existing configuration, so any of their
     // configuration that is marked as unmanaged is allowed to override the
     // existing configuration on installation.
-    if ($name != $this->drupalGetProfile() && !$this->helper->getExtensionInfo($type, $name, NULL, FALSE)) {
+    if ($name != $this->drupalGetProfile() && !$this->helper->getExtensionInfo($type, $name)) {
       // Throw an exception if the module being installed contains configuration
       // that already exists. Additionally, can not continue installing more
       // modules because those may depend on the current module being installed.

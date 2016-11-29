@@ -108,8 +108,8 @@ interface ExtensionConfigHandlerInterface {
    *   The machine name of the project to get the config dependencies for.
    * @param string $type
    *   Optionally supply the type of extension.
-   * @param bool $all
-   *   By default, get all dependencies. Optionally set to FALSE to exclude
+   * @param bool $exclude_provided_dependencies
+   *   By default, get all dependencies. Optionally set to TRUE to exclude
    *   those that are already provided by listed dependencies of the extension
    *   (whether they are directly or indirectly dependent).
    * @param int $recursion_limit
@@ -118,7 +118,7 @@ interface ExtensionConfigHandlerInterface {
    * @return array
    *   An array of things the extension depends on, keyed by dependency type.
    */
-  public function getExtensionConfigDependencies($extension, $type = NULL, $all = TRUE, $recursion_limit = NULL);
+  public function getExtensionConfigDependencies($extension, $type = NULL, $exclude_provided_dependencies = FALSE, $with_unmanaged = TRUE, $recursion_limit = NULL);
 
   /**
    * Get the dependencies for a single config item.
@@ -223,8 +223,7 @@ interface ExtensionConfigHandlerInterface {
    *   for it. Has no effect if $key is not specified.
    *
    * @return bool|mixed
-   *   If $key was not specified, just return TRUE or FALSE, depending on
-   *   whether there is any cm_config_tools info for the extension at all.
+   *   If $key was not specified, just return all cm_config_tools info or FALSE.
    */
   public function getExtensionInfo($type, $extension_name, $key = NULL, $default = NULL);
 

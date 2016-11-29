@@ -334,48 +334,43 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
 
     foreach ($source_dirs as $type => $type_source_dirs) {
       foreach ($type_source_dirs as $source_dir => $extension_name) {
-        $unmanaged = $force_unmanaged ? array() : $this->getExtensionInfo($type, $extension_name, 'unmanaged', array());
-        if (is_array($unmanaged)) {
-          $unmanaged = array_flip($unmanaged);
-        }
-        else {
-          $unmanaged = array();
-        }
+        $info = $this->getExtensionInfo($type, $extension_name);
+        $importable = $info['managed'] + $info['unmanaged'] + $info['implicit'];
 
         $file_storage = new FileStorage($source_dir . '/' . $subdir);
-        foreach ($file_storage->listAll() as $name) {
+        // Only actually import config listed as managed, implicit, or
+        // unmanaged. Anything else is only there to be installed as per normal
+        // core behavior.
+        foreach (array_intersect($importable, $file_storage->listAll()) as $name) {
           // Replace data if it is not listed as unmanaged (i.e. should only be
           // installed once), or does not yet exist.
-          if (!isset($unmanaged[$name]) || !$source_storage->exists($name)) {
+          if (!isset($info['unmanaged'][$name]) || !$source_storage->exists($name)) {
             if ($mapped = $source_storage->getMapping($name)) {
               throw new ExtensionConfigConflictException("Could not import configuration because the configuration item '$name' is found in both the '$extension_name' and '$mapped' extensions.");
             }
 
-            // @TODO Any existing unmanaged config will not be mapped so it
-            // could be provided by another extension that manages it (e.g. as a
-            // dependency) or deleted by another extension.
+            // Note: Any config marked as unmanaged that already exists will get
+            // skipped and will not even get mapped. This does mean another
+            // extension might also list it as managed or deleted.
             $source_storage->map($name, $extension_name);
             $data = $file_storage->read($name);
             $source_storage->replaceData($name, $data);
           }
         }
 
-        $deletes = $this->getExtensionInfo($type, $extension_name, 'delete', array());
-        if (is_array($deletes)) {
-          foreach ($deletes as $name) {
-            if ($mapped = $source_storage->getMapping($name)) {
-              if ($mapped == $extension_name) {
-                throw new ExtensionConfigConflictException("Could not import configuration because the configuration item '$name' is provided by the '$extension_name' extension but also listed for deletion.");
-              }
-              else {
-                throw new ExtensionConfigConflictException("Could not import configuration because the configuration item '$name' is found in both the '$extension_name' and '$mapped' extensions.");
-              }
+        foreach ($info['delete'] as $name) {
+          if ($mapped = $source_storage->getMapping($name)) {
+            if ($mapped == $extension_name) {
+              throw new ExtensionConfigConflictException("Could not import configuration because the configuration item '$name' is provided by the '$extension_name' extension but also listed for deletion.");
             }
-
-            // Replacing as an empty array simulates an item being deleted.
-            $source_storage->replaceData($name, array());
-            $source_storage->map($name, $extension_name);
+            else {
+              throw new ExtensionConfigConflictException("Could not import configuration because the configuration item '$name' is found in both the '$extension_name' and '$mapped' extensions.");
+            }
           }
+
+          // Replacing as an empty array simulates an item being deleted.
+          $source_storage->replaceData($name, array());
+          $source_storage->map($name, $extension_name);
         }
       }
     }
@@ -418,7 +413,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
   /**
    * {@inheritdoc}
    */
-  public function getExtensionConfigDependencies($extension, $type = NULL, $all = TRUE, $recursion_limit = NULL) {
+  public function getExtensionConfigDependencies($extension, $type = NULL, $exclude_provided_dependencies = FALSE, $with_unmanaged = TRUE, $recursion_limit = NULL) {
     if (!isset($type)) {
       $type = $this->getExtensionType($extension, TRUE);
     }
@@ -430,12 +425,15 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
       ),
     );
 
-    $listed_config = $this->getExtensionInfo($type, $extension, 'managed', array());
-    if ($listed_config && is_array($listed_config)) {
-      $listed_config = array_values($listed_config);
-      $exclude['config'] = array_combine($listed_config, $listed_config);
+    $info = $this->getExtensionInfo($type, $extension);
+    // When working out dependencies, we are replacing the existing implicit
+    // dependencies so ignore those here.
+    $importable = $info['managed'] + $info['unmanaged'];
 
-      if (!$all) {
+    if ($importable) {
+      $exclude['config'] = $importable;
+
+      if ($exclude_provided_dependencies) {
         if ($type === 'theme') {
           $extension_data = $this->themeHandler->rebuildThemeData();
         }
@@ -452,22 +450,21 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
           $exclude[$type] += array_combine($extension_requirements, $extension_requirements);
           foreach ($extension_requirements as $extension_dependency) {
             $dependency_type = $this->getExtensionType($extension_dependency, TRUE);
-            if ($this->getExtensionInfo($dependency_type, $extension_dependency)) {
-              $file_storage = new FileStorage($extension_data[$extension_dependency]->getPath() . '/' . InstallStorage::CONFIG_INSTALL_DIRECTORY);
-              if ($dependency_managed_config = $file_storage->listAll()) {
-                // Unmanaged items could be changed, so we have to export those.
-                $unmanaged = $this->getExtensionInfo($dependency_type, $extension_dependency, 'unmanaged');
-                if ($unmanaged && is_array($unmanaged)) {
-                  $dependency_managed_config = array_diff($dependency_managed_config, array_values($unmanaged));
-                }
-                $exclude['config'] += array_combine($dependency_managed_config, $dependency_managed_config);
+            if ($extension_dependency_info = $this->getExtensionInfo($dependency_type, $extension_dependency)) {
+              $importable = $extension_dependency_info['managed'] + $extension_dependency_info['unmanaged'] + $extension_dependency_info['implicit'];
+
+              // Unmanaged items could be changed, so we have to export those.
+              if ($with_unmanaged && $extension_dependency_info['unmanaged']) {
+                $importable = array_diff_key($importable, $extension_dependency_info['unmanaged']);
               }
+
+              $exclude['config'] += $importable;
             }
           }
         }
       }
 
-      foreach ($listed_config as $config_name) {
+      foreach ($importable as $config_name) {
         $config_dependencies = $this->getConfigDependencies($config_name, $recursion_limit);
         foreach ($config_dependencies as $dependency_type => $type_dependencies) {
           if (!isset($dependencies[$dependency_type])) {
@@ -569,20 +566,16 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
       throw new ExtensionConfigException('Extension could not be found.');
     }
 
-    $listed_config = $this->getExtensionInfo($type, $extension, 'managed', array());
-    if ($listed_config && is_array($listed_config)) {
-      $exclude['config'] = $listed_config;
+    $info = $this->getExtensionInfo($type, $extension);
+    $importable = $info['managed'] + $info['unmanaged'];
+    if ($importable) {
+      $exclude['config'] = $importable;
 
       $dependency_manager = $this->configManager->getConfigDependencyManager();
-      foreach ($listed_config as $config_name) {
+      foreach ($importable as $config_name) {
         // Recursively fetch configuration entities that are dependants of this
         // configuration entity (i.e. reverse dependencies).
         $dependants += $this->getConfigSuggestions($config_name, $dependency_manager, $recursion_limit);
-      }
-
-      $unmanaged = $this->getExtensionInfo($type, $extension, 'unmanaged', array());
-      if ($unmanaged && is_array($unmanaged)) {
-        $exclude['config'] = array_merge($exclude['config'], $unmanaged);
       }
     }
 
@@ -631,10 +624,18 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    *
    * @param string $info_filename
    *   The info filename.
+   * @param string[] $key
+   *   An array of keys that the dependencies should be placed within.
    * @param string[] $dependencies
-   *   An array of module dependencies.
+   *   An array of module dependencies to add.
+   * @param string[] $remove
+   *   An array of module dependencies to remove. @TODO Implement this.
    */
-  protected function addToExtensionDependencies($info_filename, $dependencies) {
+  protected function updateManifest($info_filename, $key, $dependencies, $remove = array()) {
+    if (is_array($key)) {
+      $key = reset($key); // @TODO Implement sub-keys.
+    }
+
     $contents = file_get_contents($info_filename);
 
     $contents = str_replace(array("\r\n", "\r"), "\n", $contents);
@@ -645,7 +646,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
     // would 'win').
     $reverse_lines = array_reverse($lines, TRUE);
 
-    if (strpos($contents, 'dependencies:') !== FALSE) {
+    if (strpos($contents, $key . ':') !== FALSE) {
       $whitespace_chars = " \t\n\r\0\x0B";
       $last_root_row = count($lines);
       $plain_block = TRUE;
@@ -666,7 +667,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
           $row = rtrim($row, $whitespace_chars . '{}');
           if ($row) {
             if (strpos($whitespace_chars, $row[0]) === FALSE) {
-              if ($row == 'dependencies:') {
+              if ($row == $key . ':') {
                 // Dependencies row found.
                 $dependencies_row = $i;
                 break;
@@ -733,7 +734,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
         }
       }
       $insert_before = $insert_at;
-      $dependencies = "dependencies:\n" . $dependencies;
+      $dependencies = $key . ":\n" . $dependencies;
     }
 
     $lines = array_merge(array_slice($lines, 0, $insert_at), array($dependencies), array_slice($lines, $insert_before));
@@ -794,12 +795,20 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
     foreach ($extension_dirs as $type => $type_source_dirs) {
       foreach ($type_source_dirs as $source_dir => $extension_name) {
         // Get the configuration.
-        $info = $this->getExtensionInfo($type, $extension_name, 'managed', array());
+        $info = $this->getExtensionInfo($type, $extension_name);
+        // Implicit dependencies will get re-calculated and added to this array.
+        $exportable = $info['managed'] + $info['unmanaged'];
 
-        if ($info && is_array($info)) {
-          // Include any config dependencies.
+        $implicit = $info['implicit'];
+        // @TODO Delete files of previously-implicit dependencies and
+        // replace the list in the info file (removing lines and adding
+        // lines where necessary). But avoid unnecessary change if possible?
+
+        if ($exportable) {
+          // Include any config dependencies, which will get added to the array
+          // of config to export, if $with_dependencies is not empty.
           if ($with_dependencies) {
-            $dependencies = $this->getExtensionConfigDependencies($extension_name, $type, ($with_dependencies !== ExtensionConfigHandlerInterface::WITH_DEPENDENCIES_NOT_PROVIDED));
+            $dependencies = $this->getExtensionConfigDependencies($extension_name, $type, ($with_dependencies === ExtensionConfigHandlerInterface::WITH_DEPENDENCIES_NOT_PROVIDED), FALSE);
 
             // Write module dependencies to .info.yml file. Themes cannot depend
             // on modules, so skip this for them.
@@ -808,36 +817,27 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
               if (isset($module_data[$extension_name])) {
                 if ($missing_dependencies = array_diff($dependencies['module'], array_keys($module_data[$extension_name]->requires))) {
                   $info_filename = $module_data[$extension_name]->getPathname();
-                  $this->addToExtensionDependencies($info_filename, $missing_dependencies);
+                  $this->updateManifest($info_filename, array('dependencies'), $missing_dependencies);
                   $files_written[$extension_name][] = $info_filename;
                 }
               }
             }
 
             if (!empty($dependencies['config'])) {
-              $info = array_unique(array_merge(array_values($info), $dependencies['config']));
+              $exportable = $exportable + $dependencies['config'];
             }
-          }
-
-          // Exclude any unmanaged items.
-          $unmanaged = $this->getExtensionInfo($type, $extension_name, 'unmanaged', array());
-          if ($unmanaged && is_array($unmanaged)) {
-            $unmanaged = array_flip($unmanaged);
-          }
-          else {
-            $unmanaged = array();
           }
 
           try {
             $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
-            foreach ($info as $name) {
+            foreach ($exportable as $name) {
               $config = $config_factory->get($name);
               if ($data = $config->get()) {
                 $existing_export = $source_dir_storage->read($name);
 
-                // Skip existing config that is listed as 'unmanaged' unless the
-                // 'force unmanaged' option was passed.
-                if ($existing_export && isset($unmanaged[$name]) && !$force_unmanaged) {
+                // Skip existing config that is only listed as 'unmanaged'
+                // unless the 'force unmanaged' option was passed.
+                if ($existing_export && isset($info['unmanaged'][$name]) && !isset($info['managed'][$name]) && !$force_unmanaged) {
                   continue;
                 }
 
@@ -874,6 +874,8 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    * {@inheritdoc}
    */
   public function getExtensionInfo($type, $extension_name, $key = NULL, $default = NULL) {
+    $array_info = array('managed', 'unmanaged', 'implicit', 'delete');
+
     if ($extension_path = drupal_get_path($type, $extension_name)) {
       // Info parser service statically caches info files, so it does not
       // matter that file may already have been parsed by this class.
@@ -881,10 +883,36 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
       $info = $this->infoParser->parse($info_filename);
 
       if ($key) {
-        return isset($info['cm_config_tools'][$key]) ? $info['cm_config_tools'][$key] : $default;
+        if (in_array($key, $array_info, TRUE)) {
+          if (isset($info['cm_config_tools'][$key]) && $info['cm_config_tools'][$key] && is_array($info['cm_config_tools'][$key])) {
+            $info['cm_config_tools'][$key] = array_values($info['cm_config_tools'][$key]);
+            $info['cm_config_tools'][$key] = array_combine($info['cm_config_tools'][$key], $info['cm_config_tools'][$key]);
+          }
+          else {
+            return $default;
+          }
+        }
+        else {
+          return isset($info['cm_config_tools'][$key]) ? $info['cm_config_tools'][$key] : $default;
+        }
       }
       else {
-        return array_key_exists('cm_config_tools', $info);
+        if (array_key_exists('cm_config_tools', $info)) {
+          // Massage info to be in a valid and useful format.
+          foreach ($array_info as $info_key) {
+            if (isset($info[$info_key]) && $info[$info_key] && is_array($info[$info_key])) {
+              $info[$info_key] = array_values($info[$info_key]);
+              $info[$info_key] = array_combine($info[$info_key], $info[$info_key]);
+            }
+            else {
+              $info[$info_key] = array();
+            }
+          }
+          return $info;
+        }
+        else {
+          return FALSE;
+        }
       }
     }
 
