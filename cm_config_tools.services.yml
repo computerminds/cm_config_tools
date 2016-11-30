@@ -1,9 +1,11 @@
 services:
   cm_config_tools:
     class: Drupal\cm_config_tools\ExtensionConfigHandler
-    arguments: ['@config.storage', '@info_parser', '@module_handler', '@module_installer', '@theme_handler', '@config.manager', '@config_update.config_diff', '@lock.persistent', '@config.typed', '@event_dispatcher', '@string_translation']
+    arguments: ['@config.storage', '@cm_config_tools.info_parser', '@module_handler', '@module_installer', '@theme_handler', '@config.manager', '@config_update.config_diff', '@lock.persistent', '@state', '@config.typed', '@event_dispatcher', '@string_translation']
   cm_config_tools.config_installer:
     class:  Drupal\cm_config_tools\ConfigInstaller
     arguments: ['@cm_config_tools.config_installer.inner', '@cm_config_tools', '@config.factory', '@config.storage', '@config.manager']
     decorates: config.installer
     public: false
+  cm_config_tools.info_parser:
+    class: Drupal\cm_config_tools\ResettableInfoParser

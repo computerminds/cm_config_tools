@@ -6,6 +6,8 @@
  */
 
 use Drupal\cm_config_tools\ConfigDiffStorageComparer;
+use Drupal\cm_config_tools\Exception\ExtensionConfigLockedException;
+use Drupal\cm_config_tools\ExtensionConfigHandlerInterface;
 use Drupal\Core\Config\FileStorage;
 use Drupal\Core\Config\InstallStorage;
 use Drush\Log\LogLevel;
@@ -24,34 +26,33 @@ function cm_config_tools_drush_command() {
   $description = '';
   $description .= "Write back configuration to module's config/install directory." . "\n";
   $description .= "List which configuration settings you want to export in the" . "\n";
-  $description .= "module's info file by listing them under 'config_devel', as shown below:"  . "\n";
+  $description .= "module's info file by listing them under 'cm_config_tools', as shown below:"  . "\n";
   $description .= "\n";
-  $description .= "config_devel:"  . "\n";
-  $description .= "  - entity.view_display.node.article.default"  . "\n";
-  $description .= "  - entity.view_display.node.article.teaser"  . "\n";
-  $description .= "  - field.instance.node.article.body"  . "\n";
+  $description .= "cm_config_tools:"  . "\n";
+  $description .= "  managed:"  . "\n";
+  $description .= "    - field.field.node.page.field_image"  . "\n";
 
   $items['cm-config-tools-export'] = $dependencies + array(
     'description' => $description,
-    'arguments' => array(
-      'projects' => 'Module/theme machine names, separated with commas. If left blank, export to any enabled projects containing a \'cm_config_tools\' key in their .info.yml files.',
-    ),
+    'arguments' => array(),
     'options' => array(
-      'all' => array(
-        'description' => 'Without this option, any config listed as \'create_only\' is only exported when it has not previously been exported. Set this option to overwrite any such config even if it has been previously exported.',
+      'force-unmanaged' => array(
+        'description' => 'Without this option, any config listed as \'unmanaged\' is only exported when it has not previously been exported. Set this option to overwrite any such config even if it has been previously exported.',
       ),
       'subdir' => array(
         'description' => 'Sub-directory of configuration to import. Defaults to "config/install".',
         'example-value' => 'config/optional',
       ),
       'fully-normalize' => array(
-        'description' => 'Sort configuration keys when exporting, and strip any empty arrays. This ensures more reliability when comparing between source and target config but usually means unnecessary changes.',
+        'description' => 'Sort keys within configuration items when exporting, and strip any empty arrays. This ensures more reliability when comparing between source and target config but usually means unnecessary changes.',
+      ),
+      'include-dependencies' => array(
+        'description' => 'By default, config dependencies of the config to export are also exported (in order to ensure all dependencies can never be missing). But set this parameter to 0 to avoid doing that, in which case you will need to ensure dependencies are met before imports/installs. Set it to 1 in order to force config dependencies to be exported regardless of whether config is provided by other extensions working with cm_config_tools.',
       ),
     ),
     'required-arguments' => FALSE,
     'examples' => array(
-      'drush cm-config-tools-export' => 'Write back configuration to the specified modules from the active storage, from any projects containing a \'cm_config_tools\' key in their .info.yml files.',
-      'drush cm-config-tools-export mymodule,othermodule --fully-normalize' => 'Write back normalized (sorted and unfiltered) configuration to the specified modules, based on .info file.',
+      'drush cm-config-tools-export --include-dependencies=0' => 'Write back configuration from the active storage, to any projects containing a \'cm_config_tools\' key in their .info.yml files, without any of that configuration\'s dependencies.',
     ),
     'aliases' => array('cmce'),
   );
@@ -65,18 +66,19 @@ function cm_config_tools_drush_command() {
   $description .= "cm_config_tools:"  . "\n";
   $description .= "  delete:"  . "\n";
   $description .= "    - field.field.node.article.body"  . "\n";
-  $description .= "  create_only:"  . "\n";
+  $description .= "  unmanaged:"  . "\n";
   $description .= "    - image.style.full_width"  . "\n";
 
   $items['cm-config-tools-import'] = $dependencies + array(
     'description' => $description,
-    'arguments' => array(
-      'project' => 'Module/theme machine name. Separate multiple projects with commas. If left blank, import from any enabled projects containing a \'cm_config_tools\' key in their .info.yml files.',
-    ),
+    'arguments' => array(),
     'options' => array(
       'preview' => array(
         'description' => 'Format for displaying proposed changes. Recognized values: list, diff. Defaults to list. Set to 0 to disable.',
         'example-value' => 'list',
+      ),
+      'force-unmanaged' => array(
+        'description' => 'Without this option, any config listed as \'unmanaged\' is only imported when it has not previously been created. Set this option to overwrite any such config even if it has been previously created.',
       ),
       'subdir' => array(
         'description' => 'Sub-directory of configuration to import. Defaults to "config/install".',
@@ -85,10 +87,25 @@ function cm_config_tools_drush_command() {
     ),
     'required-arguments' => FALSE,
     'examples' => array(
-      'drush cm-config-tools-import' => 'Import configuration into the active storage, from any projects containing a \'cm_config_tools\' key in their .info.yml files.',
-      'drush cm-config-tools-import mymodule --preview=0' => 'Import configuration into the active storage, from the specified project, without any preview.',
+      'drush cm-config-tools-import --preview=0' => 'Import configuration into the active storage, from any projects containing a \'cm_config_tools\' key in their .info.yml files, without any preview.',
     ),
     'aliases' => array('cmci'),
+  );
+
+  // @TODO Add command to suggest dependants. Optionally invoke it from
+  // drush_cm_config_tools_export(). See the @TODO note in
+  // ExtensionConfigHandlerInterface::export() for options.
+
+  $items['cm-config-tools-revert'] = $dependencies + array(
+    'description' => $description,
+    'arguments' => array(
+      'full-name' => 'Full configuration name. Separate multiple config names with commas.',
+    ),
+    'required-arguments' => TRUE,
+    'examples' => array(
+      'drush cm-config-tools-revert migrate_plus.migration.hotels' => 'Revert the hotels migration.',
+    ),
+    'aliases' => array('cmcr'),
   );
 
   return $items;
@@ -97,19 +114,15 @@ function cm_config_tools_drush_command() {
 /**
  * Drush command callback.
  */
-function drush_cm_config_tools_export($extensions = NULL) {
+function drush_cm_config_tools_export() {
   $subdir = drush_get_option('subdir', InstallStorage::CONFIG_INSTALL_DIRECTORY);
-  $all = drush_get_option('all', FALSE);
+  $force_unmanaged = drush_get_option('force-unmanaged', FALSE);
   $fully_normalize = drush_get_option('fully-normalize', FALSE);
+  $include_dependencies = drush_get_option('include-dependencies', ExtensionConfigHandlerInterface::WITH_DEPENDENCIES_NOT_PROVIDED);
 
   /** @var \Drupal\cm_config_tools\ExtensionConfigHandler $helper */
   $helper = \Drupal::service('cm_config_tools');
-  if ($extensions) {
-    $result = $helper->exportExtension($extensions, $subdir, $all, $fully_normalize);
-  }
-  else {
-    $result = $helper->exportAll($subdir, $all, $fully_normalize);
-  }
+  $result = $helper->export($include_dependencies, $subdir, $force_unmanaged, $fully_normalize);
 
   if ($result === TRUE) {
     return drush_log(dt('Configuration successfully exported.'), LogLevel::SUCCESS);
@@ -133,21 +146,17 @@ function drush_cm_config_tools_export($extensions = NULL) {
 /**
  * Drush command callback.
  */
-function drush_cm_config_tools_import($extensions = NULL) {
+function drush_cm_config_tools_import() {
   /** @var \Drupal\cm_config_tools\ExtensionConfigHandler $helper */
   $helper = \Drupal::service('cm_config_tools');
-  if ($extensions) {
-    $extension_dirs = $helper->getExtensionDirectories($extensions);
-  }
-  else {
-    $extension_dirs = $helper->getAllExtensionDirectories();
-  }
-
   $subdir = drush_get_option('subdir', InstallStorage::CONFIG_INSTALL_DIRECTORY);
-  if ($extension_dirs && ($storage_comparer = $helper->getStorageComparer($extension_dirs, $subdir))) {
+  $force_unmanaged = drush_get_option('force-unmanaged', FALSE);
+  $extension_dirs = $helper->getExtensionDirectories();
+
+  if ($extension_dirs && ($storage_comparer = $helper->getStorageComparer($extension_dirs, $subdir, $force_unmanaged))) {
     if ($preview = drush_get_option('preview', 'table')) {
       if ($preview == 'diff') {
-        drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs, $subdir);
+        drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs);
       }
       else {
         drush_cm_config_tools_preview_table($storage_comparer);
@@ -156,11 +165,38 @@ function drush_cm_config_tools_import($extensions = NULL) {
 
     // Use _drush_config_import() rather than import methods on $helper.
     if (drush_confirm(dt('Import configuration changes?'))) {
-      return drush_op('_drush_config_import', $storage_comparer);
+      return drush_op('_drush_cm_config_tools_import', $storage_comparer);
     }
   }
   else {
     return drush_log(dt('There are no changes to import.'), LogLevel::OK);
+  }
+}
+
+/**
+ * Run the config import once confirmed and handle any errors.
+ */
+function _drush_cm_config_tools_import(ConfigDiffStorageComparer $storage_comparer) {
+  /** @var \Drupal\cm_config_tools\ExtensionConfigHandler $helper */
+  $helper = \Drupal::service('cm_config_tools');
+  try {
+    if ($errors = $helper->importFromComparer($storage_comparer)) {
+      // Return a negative result for UI purposes. We do not differentiate
+      // between an actual synchronization error and a failed lock, because
+      // concurrent synchronizations are an edge-case happening only when
+      // multiple developers or site builders attempt to do it without
+      // coordinating.
+      $message = 'The import failed due for the following reasons:' . "\n";
+      $message .= implode("\n", $errors);
+
+      return drush_set_error('config_import_fail', $message);
+    }
+    else {
+      drush_log('The configuration was imported successfully.', LogLevel::SUCCESS);
+    }
+  }
+  catch (ExtensionConfigLockedException $e) {
+    drush_log('Another request may be synchronizing configuration already.', LogLevel::WARNING);
   }
 }
 
@@ -170,7 +206,7 @@ function drush_cm_config_tools_import($extensions = NULL) {
  * @param \Drupal\Core\Config\StorageComparerInterface $storage_comparer
  * @param array $extension_dirs
  */
-function drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY) {
+function drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs) {
   /** @var \Drupal\cm_config_tools\ExtensionConfigHandler $helper */
   $helper = \Drupal::service('cm_config_tools');
 
@@ -178,30 +214,47 @@ function drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs, 
   $temp_dir = drush_cm_config_tools_tempdir('target');
   $temp_storage = new FileStorage($temp_dir);
   $active_storage = $storage_comparer->getTargetStorage();
-  foreach ($extension_dirs as $source_dir => $extension_name) {
-    $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
-    foreach ($source_dir_storage->listAll() as $name) {
-      if ($data = $active_storage->read($name)) {
-        $data = $helper::normalizeConfig($name, $data);
-        $temp_storage->write($name, $data);
+  foreach ($extension_dirs as $type => $type_extension_dirs) {
+    foreach ($type_extension_dirs as $source_dir => $extension_name) {
+      $info = $helper->getExtensionInfo($type, $extension_name);
+      $importable = $info['managed'] + $info['unmanaged'] + $info['implicit'];
+
+      foreach ($importable as $name) {
+        if ($data = $active_storage->read($name)) {
+          $data = $helper::normalizeConfig($name, $data);
+          $temp_storage->write($name, $data);
+        }
       }
     }
   }
 
+  $single_dir = FALSE;
   if (count($extension_dirs) == 1) {
-    drush_shell_exec('diff -x %s -u %s %s', '*.git', $temp_dir, key($extension_dirs));
+    $type_extension_dirs = reset($extension_dirs);
+    if ($type_extension_dirs && count($type_extension_dirs) == 1) {
+      $single_dir = TRUE;
+    }
+  }
+
+  if ($single_dir) {
+    $type_extension_dirs = reset($extension_dirs);
+    drush_shell_exec('diff -x %s -u %s %s', '*.git', $temp_dir, key($type_extension_dirs));
   }
   else {
     // Copy source storage to another temporary directory.
     $temp_source_dir = drush_cm_config_tools_tempdir('source');
     $temp_storage = new FileStorage($temp_source_dir);
     $source_storage = $storage_comparer->getSourceStorage();
-    foreach ($extension_dirs as $source_dir => $extension_name) {
-      $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
-      foreach ($source_dir_storage->listAll() as $name) {
-        if ($data = $source_storage->read($name)) {
-          $data = $helper::normalizeConfig($name, $data);
-          $temp_storage->write($name, $data);
+    foreach ($extension_dirs as $type => $type_extension_dirs) {
+      foreach ($type_extension_dirs as $source_dir => $extension_name) {
+        $info = $helper->getExtensionInfo($type, $extension_name, NULL);
+        $importable = $info['managed'] + $info['unmanaged'] + $info['implicit'];
+
+        foreach ($importable as $name) {
+          if ($data = $source_storage->read($name)) {
+            $data = $helper::normalizeConfig($name, $data);
+            $temp_storage->write($name, $data);
+          }
         }
       }
     }
@@ -259,7 +312,7 @@ function drush_cm_config_tools_preview_table(ConfigDiffStorageComparer $storage_
   }
 
   $rows = array();
-  $rows[] = array('Provded by', 'Config', 'Operation');
+  $rows[] = array('Provided by', 'Config', 'Operation');
   foreach ($storage_comparer->getChangelist() as $change => $configs) {
     switch ($change) {
       case 'delete':
@@ -306,4 +359,66 @@ function drush_cm_config_tools_sort_preview_table($a, $b) {
     }
   }
   return 0;
+}
+
+/**
+ * Drush command callback.
+ *
+ * This could really just be part of config_update. The only 'magic' this
+ * provides is to translate from a full config name (including prefix and
+ * provider) to the 'short' name, which the methods on ConfigReverter use, and
+ * to allow reverting multiple config items in one operation.
+ *
+ * @see \Drupal\config_update\ConfigReverter::import()
+ * @see \Drupal\config_update\ConfigReverter::revert()
+ */
+function drush_cm_config_tools_revert($names) {
+  $names = array_map('trim', explode(',', $names));
+  $errors = [];
+  if ($names) {
+    $type_manager = \Drupal::entityTypeManager();
+    /** @var \Drupal\config_update\ConfigLister $config_lister */
+    $config_lister = \Drupal::service('config_update.config_list');
+    /** @var \Drupal\config_update\ConfigReverter $reverter */
+    $reverter = \Drupal::service('config_update.config_update');
+    list($active_list, , ) = $config_lister->listConfig('type', 'system.all');
+
+    foreach ($names as $full_name) {
+      // ConfigReverter methods require the 'short' name for typed config,
+      // otherwise 'system.simple'.
+      if ($type = $config_lister->getTypeNameByConfigName($full_name)) {
+        /** @var \Drupal\Core\Config\Entity\ConfigEntityTypeInterface $definition */
+        $definition = $type_manager->getDefinition($type);
+        $prefix = $definition->getConfigPrefix() . '.';
+        if (strpos($full_name, $prefix) === 0) {
+          $name = substr($full_name, strlen($prefix));
+        }
+        else {
+          $errors[$full_name] = dt('Config @name does not match expected config prefix.', array('@name' => $full_name));
+          continue;
+        }
+      }
+      else {
+        $type = 'system.simple';
+        $name = $full_name;
+      }
+
+      $method = in_array($full_name, $active_list) ? 'revert' : 'import';
+      if (!$reverter->{$method}($type, $name)) {
+        $errors[$name] = dt('Config @name could not be reverted.', array('@name' => $name));
+      }
+    }
+  }
+  else {
+    $errors[] = dt('No configuration specified to revert.');
+  }
+
+  if ($errors) {
+    foreach ($errors as $error) {
+      drush_set_error($error);
+    }
+  }
+  else {
+    return drush_log(dt('Configuration items successfully reverted.'), LogLevel::SUCCESS);
+  }
 }

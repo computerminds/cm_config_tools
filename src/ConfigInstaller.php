@@ -2,6 +2,7 @@
 
 namespace Drupal\cm_config_tools;
 
+use Drupal\cm_config_tools\Exception\UnmetDependenciesException;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Config\ConfigInstallerInterface;
 use Drupal\Core\Config\ConfigManagerInterface;
@@ -9,7 +10,6 @@ use Drupal\Core\Config\FileStorage;
 use Drupal\Core\Config\InstallStorage;
 use Drupal\Core\Config\PreExistingConfigException;
 use Drupal\Core\Config\StorageInterface;
-use Drupal\Core\Config\UnmetDependenciesException;
 use Drupal\Core\Site\Settings;
 
 /**
@@ -112,7 +112,13 @@ class ConfigInstaller implements ConfigInstallerInterface {
     // Install profiles and extensions using cm_config_tools can have config
     // clashes. Configuration that has the same name as a module's configuration
     // will be used instead.
-    if ($this->helper->getExtensionType($name) != 'profile' && !$this->helper->getExtensionInfo($name, NULL, NULL, 'cm_config_tools', TRUE)) {
+    // @TODO Modules using cm_config_tools should not override any configuration
+    // marked as unmanaged if it already exists. Not quite sure where to do
+    // this. Install profiles are a slightly special case -- their configuration
+    // is explicitly allowed to override existing configuration, so any of their
+    // configuration that is marked as unmanaged is allowed to override the
+    // existing configuration on installation.
+    if ($name != $this->drupalGetProfile() && !$this->helper->getExtensionInfo($type, $name)) {
       // Throw an exception if the module being installed contains configuration
       // that already exists. Additionally, can not continue installing more
       // modules because those may depend on the current module being installed.
@@ -280,6 +286,7 @@ class ConfigInstaller implements ConfigInstallerInterface {
    *   A list of missing config dependencies.
    */
   protected function getMissingDependencies($config_name, array $data, array $enabled_extensions, array $all_config) {
+    $missing = [];
     if (isset($data['dependencies'])) {
       list($provider) = explode('.', $config_name, 2);
       $all_dependencies = $data['dependencies'];
@@ -307,12 +314,12 @@ class ConfigInstaller implements ConfigInstallerInterface {
             break;
         }
         if (!empty($list_to_check)) {
-          return array_diff($dependencies, $list_to_check);
+          $missing = array_merge($missing, array_diff($dependencies, $list_to_check));
         }
       }
     }
 
-    return [];
+    return $missing;
   }
 
   /**
