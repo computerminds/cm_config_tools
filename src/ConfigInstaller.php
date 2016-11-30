@@ -286,6 +286,7 @@ class ConfigInstaller implements ConfigInstallerInterface {
    *   A list of missing config dependencies.
    */
   protected function getMissingDependencies($config_name, array $data, array $enabled_extensions, array $all_config) {
+    $missing = [];
     if (isset($data['dependencies'])) {
       list($provider) = explode('.', $config_name, 2);
       $all_dependencies = $data['dependencies'];
@@ -313,12 +314,12 @@ class ConfigInstaller implements ConfigInstallerInterface {
             break;
         }
         if (!empty($list_to_check)) {
-          return array_diff($dependencies, $list_to_check);
+          $missing = array_merge($missing, array_diff($dependencies, $list_to_check));
         }
       }
     }
 
-    return [];
+    return $missing;
   }
 
   /**
