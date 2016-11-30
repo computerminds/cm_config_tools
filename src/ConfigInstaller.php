@@ -2,7 +2,6 @@
 
 namespace Drupal\cm_config_tools;
 
-use Drupal\cm_config_tools\Exception\UnmetDependenciesException;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Config\ConfigInstallerInterface;
 use Drupal\Core\Config\ConfigManagerInterface;
@@ -10,6 +9,7 @@ use Drupal\Core\Config\FileStorage;
 use Drupal\Core\Config\InstallStorage;
 use Drupal\Core\Config\PreExistingConfigException;
 use Drupal\Core\Config\StorageInterface;
+use Drupal\Core\Config\UnmetDependenciesException;
 use Drupal\Core\Site\Settings;
 
 /**
@@ -112,7 +112,7 @@ class ConfigInstaller implements ConfigInstallerInterface {
     // Install profiles and extensions using cm_config_tools can have config
     // clashes. Configuration that has the same name as a module's configuration
     // will be used instead.
-    if ($name != $this->drupalGetProfile() && !$this->helper->getExtensionInfo($type, $name, NULL, NULL, 'cm_config_tools')) {
+    if ($this->helper->getExtensionType($name) != 'profile' && !$this->helper->getExtensionInfo($name, NULL, NULL, 'cm_config_tools', TRUE)) {
       // Throw an exception if the module being installed contains configuration
       // that already exists. Additionally, can not continue installing more
       // modules because those may depend on the current module being installed.

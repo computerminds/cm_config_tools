@@ -6,7 +6,6 @@
  */
 
 use Drupal\cm_config_tools\ConfigDiffStorageComparer;
-use Drupal\cm_config_tools\Exception\ExtensionConfigLockedException;
 use Drupal\Core\Config\FileStorage;
 use Drupal\Core\Config\InstallStorage;
 use Drush\Log\LogLevel;
@@ -92,18 +91,6 @@ function cm_config_tools_drush_command() {
     'aliases' => array('cmci'),
   );
 
-  $items['cm-config-tools-revert'] = $dependencies + array(
-    'description' => $description,
-    'arguments' => array(
-      'full-name' => 'Full configuration name. Separate multiple config names with commas.',
-    ),
-    'required-arguments' => TRUE,
-    'examples' => array(
-      'drush cm-config-tools-revert migrate_plus.migration.hotels' => 'Revert the hotels migration.',
-    ),
-    'aliases' => array('cmcr'),
-  );
-
   return $items;
 }
 
@@ -169,38 +156,11 @@ function drush_cm_config_tools_import($extensions = NULL) {
 
     // Use _drush_config_import() rather than import methods on $helper.
     if (drush_confirm(dt('Import configuration changes?'))) {
-      return drush_op('_drush_cm_config_tools_import', $storage_comparer);
+      return drush_op('_drush_config_import', $storage_comparer);
     }
   }
   else {
     return drush_log(dt('There are no changes to import.'), LogLevel::OK);
-  }
-}
-
-/**
- * Run the config import once confirmed and handle any errors.
- */
-function _drush_cm_config_tools_import(ConfigDiffStorageComparer $storage_comparer) {
-  /** @var \Drupal\cm_config_tools\ExtensionConfigHandler $helper */
-  $helper = \Drupal::service('cm_config_tools');
-  try {
-    if ($errors = $helper->importFromComparer($storage_comparer)) {
-      // Return a negative result for UI purposes. We do not differentiate
-      // between an actual synchronization error and a failed lock, because
-      // concurrent synchronizations are an edge-case happening only when
-      // multiple developers or site builders attempt to do it without
-      // coordinating.
-      $message = 'The import failed due for the following reasons:' . "\n";
-      $message .= implode("\n", $errors);
-
-      return drush_set_error('config_import_fail', $message);
-    }
-    else {
-      drush_log('The configuration was imported successfully.', LogLevel::SUCCESS);
-    }
-  }
-  catch (ExtensionConfigLockedException $e) {
-    drush_log('Another request may be synchronizing configuration already.', LogLevel::WARNING);
   }
 }
 
@@ -218,43 +178,30 @@ function drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs, 
   $temp_dir = drush_cm_config_tools_tempdir('target');
   $temp_storage = new FileStorage($temp_dir);
   $active_storage = $storage_comparer->getTargetStorage();
-  foreach ($extension_dirs as $type => $type_extension_dirs) {
-    foreach ($type_extension_dirs as $source_dir => $extension_name) {
-      $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
-      foreach ($source_dir_storage->listAll() as $name) {
-        if ($data = $active_storage->read($name)) {
-          $data = $helper::normalizeConfig($name, $data);
-          $temp_storage->write($name, $data);
-        }
+  foreach ($extension_dirs as $source_dir => $extension_name) {
+    $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
+    foreach ($source_dir_storage->listAll() as $name) {
+      if ($data = $active_storage->read($name)) {
+        $data = $helper::normalizeConfig($name, $data);
+        $temp_storage->write($name, $data);
       }
     }
   }
 
-  $single_dir = FALSE;
   if (count($extension_dirs) == 1) {
-    $type_extension_dirs = reset($extension_dirs);
-    if ($type_extension_dirs && count($type_extension_dirs) == 1) {
-      $single_dir = TRUE;
-    }
-  }
-
-  if ($single_dir) {
-    $type_extension_dirs = reset($extension_dirs);
-    drush_shell_exec('diff -x %s -u %s %s', '*.git', $temp_dir, key($type_extension_dirs));
+    drush_shell_exec('diff -x %s -u %s %s', '*.git', $temp_dir, key($extension_dirs));
   }
   else {
     // Copy source storage to another temporary directory.
     $temp_source_dir = drush_cm_config_tools_tempdir('source');
     $temp_storage = new FileStorage($temp_source_dir);
     $source_storage = $storage_comparer->getSourceStorage();
-    foreach ($extension_dirs as $type => $type_extension_dirs) {
-      foreach ($type_extension_dirs as $source_dir => $extension_name) {
-        $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
-        foreach ($source_dir_storage->listAll() as $name) {
-          if ($data = $source_storage->read($name)) {
-            $data = $helper::normalizeConfig($name, $data);
-            $temp_storage->write($name, $data);
-          }
+    foreach ($extension_dirs as $source_dir => $extension_name) {
+      $source_dir_storage = new FileStorage($source_dir . '/' . $subdir);
+      foreach ($source_dir_storage->listAll() as $name) {
+        if ($data = $source_storage->read($name)) {
+          $data = $helper::normalizeConfig($name, $data);
+          $temp_storage->write($name, $data);
         }
       }
     }
@@ -312,7 +259,7 @@ function drush_cm_config_tools_preview_table(ConfigDiffStorageComparer $storage_
   }
 
   $rows = array();
-  $rows[] = array('Provided by', 'Config', 'Operation');
+  $rows[] = array('Provded by', 'Config', 'Operation');
   foreach ($storage_comparer->getChangelist() as $change => $configs) {
     switch ($change) {
       case 'delete':
@@ -359,66 +306,4 @@ function drush_cm_config_tools_sort_preview_table($a, $b) {
     }
   }
   return 0;
-}
-
-/**
- * Drush command callback.
- *
- * This could really just be part of config_update. The only 'magic' this
- * provides is to translate from a full config name (including prefix and
- * provider) to the 'short' name, which the methods on ConfigReverter use, and
- * to allow reverting multiple config items in one operation.
- *
- * @see \Drupal\config_update\ConfigReverter::import()
- * @see \Drupal\config_update\ConfigReverter::revert()
- */
-function drush_cm_config_tools_revert($names) {
-  $names = array_map('trim', explode(',', $names));
-  $errors = [];
-  if ($names) {
-    $type_manager = \Drupal::entityTypeManager();
-    /** @var \Drupal\config_update\ConfigLister $config_lister */
-    $config_lister = \Drupal::service('config_update.config_list');
-    /** @var \Drupal\config_update\ConfigReverter $reverter */
-    $reverter = \Drupal::service('config_update.config_update');
-    list($active_list, , ) = $config_lister->listConfig('type', 'system.all');
-
-    foreach ($names as $full_name) {
-      // ConfigReverter methods require the 'short' name for typed config,
-      // otherwise 'system.simple'.
-      if ($type = $config_lister->getTypeNameByConfigName($full_name)) {
-        /** @var \Drupal\Core\Config\Entity\ConfigEntityTypeInterface $definition */
-        $definition = $type_manager->getDefinition($type);
-        $prefix = $definition->getConfigPrefix() . '.';
-        if (strpos($full_name, $prefix) === 0) {
-          $name = substr($full_name, strlen($prefix));
-        }
-        else {
-          $errors[$full_name] = dt('Config @name does not match expected config prefix.', array('@name' => $full_name));
-          continue;
-        }
-      }
-      else {
-        $type = 'system.simple';
-        $name = $full_name;
-      }
-
-      $method = in_array($full_name, $active_list) ? 'revert' : 'import';
-      if (!$reverter->{$method}($type, $name)) {
-        $errors[$name] = dt('Config @name could not be reverted.', array('@name' => $name));
-      }
-    }
-  }
-  else {
-    $errors[] = dt('No configuration specified to revert.');
-  }
-
-  if ($errors) {
-    foreach ($errors as $error) {
-      drush_set_error($error);
-    }
-  }
-  else {
-    return drush_log(dt('Configuration items successfully reverted.'), LogLevel::SUCCESS);
-  }
 }

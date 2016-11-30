@@ -10,7 +10,6 @@ namespace Drupal\cm_config_tools;
 use Drupal\cm_config_tools\Exception\ExtensionConfigConflictException;
 use Drupal\cm_config_tools\Exception\ExtensionConfigLockedException;
 use Drupal\config_update\ConfigDiffInterface;
-use Drupal\Core\Config\ConfigException;
 use Drupal\Core\Config\ConfigImporter;
 use Drupal\Core\Config\ConfigManagerInterface;
 use Drupal\Core\Config\FileStorage;
@@ -19,7 +18,6 @@ use Drupal\Core\Config\StorageComparerInterface;
 use Drupal\Core\Config\StorageException;
 use Drupal\Core\Config\StorageInterface;
 use Drupal\Core\Config\TypedConfigManagerInterface;
-use Drupal\Core\Extension\Extension;
 use Drupal\Core\Extension\InfoParserInterface;
 use Drupal\Core\Extension\ModuleHandlerInterface;
 use Drupal\Core\Extension\ModuleInstallerInterface;
@@ -174,20 +172,20 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    * Import configuration from extension directories.
    *
    * @param array $source_dirs
-   *   Array of extension types mapped to arrays of source directories mapped to
-   *   their project names.
+   *   Array of source directories as keys, mapped to their project names.
    * @param string $subdir
    *   The sub-directory of configuration to import.
    *
-   * @return array
-   *   Return any error messages logged during the import.
+   * @return bool
+   *   TRUE if the operation succeeded; FALSE if the configuration changes could
+   *   not be found to import.
    */
   protected function importExtensionDirectories($source_dirs, $subdir) {
     if ($storage_comparer = $this->getStorageComparer($source_dirs, $subdir)) {
       return $this->importFromComparer($storage_comparer);
     }
     else {
-      return array($this->t('No configuration changes could not be found to import'));
+      return FALSE;
     }
   }
 
@@ -197,8 +195,10 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    * @param \Drupal\Core\Config\StorageComparerInterface $storage_comparer
    *   The storage comparer.
    *
-   * @return array
-   *   Return any error messages logged during the import.
+   * @return bool
+   *   TRUE if the operation succeeded; May throw a
+   *   \Drupal\Core\Config\ConfigException if there is a problem during saving
+   *   the configuration.
    *
    * @throws ExtensionConfigLockedException
    *
@@ -221,31 +221,25 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
       throw new ExtensionConfigLockedException('Another request may be synchronizing configuration already.');
     }
     else {
-      try {
-        $config_importer->import();
-        return $config_importer->getErrors();
-      }
-      catch (ConfigException $e) {
-        $errors = $config_importer->getErrors();
-        $errors[] = $e->getMessage();
-        return $errors;
-      }
+      // Calling code should handle any ConfigException.
+      $config_importer->import();
+      return TRUE;
     }
   }
 
   /**
    * {@inheritdoc}
    */
-  public function getExtensionDirectories($extension, $disabled = FALSE) {
+  public function getExtensionDirectories($extension) {
     $source_dirs = array();
     if (!is_array($extension)) {
       $extension = array_map('trim', explode(',', $extension));
     }
     foreach ($extension as $extension_name) {
       // Determine the type of extension we're dealing with.
-      if ($type = $this->getExtensionType($extension_name, $disabled)) {
+      if ($type = $this->getExtensionType($extension_name)) {
         if ($extension_path = drupal_get_path($type, $extension_name)) {
-          $source_dirs[$type][$extension_path] = $extension_name;
+          $source_dirs[$extension_path] = $extension_name;
         }
       }
     }
@@ -255,33 +249,17 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
   /**
    * {@inheritdoc}
    */
-  public function getAllExtensionDirectories($disabled = FALSE) {
+  public function getAllExtensionDirectories() {
     $source_dirs = array();
-    $extensions = array(
-      'module' => array(),
-      'theme' => array(),
-    );
-    if ($disabled) {
-      $state = \Drupal::state();
-      foreach (array_keys($extensions) as $type) {
-        $extensions[$type] = $state->get('system.' . $type . '.files', array());
-      }
-    }
-    else {
-      $extensions['module'] = $this->moduleHandler->getModuleList();
-      $extensions['theme'] = $this->themeHandler->listInfo();
-    }
-
-    foreach ($extensions as $type => $type_extensions) {
-      foreach ($type_extensions as $extension_name => $extension) {
-        if ($this->getExtensionInfo($type, $extension_name)) {
-          if ($extension instanceof Extension) {
-            $source_dirs[$type][$extension->getPath()] = $extension_name;
-          }
-          elseif (is_string($extension)) {
-            $extension_path = substr($extension, 0, -(strlen('/' . $extension_name . '.info.yml')));
-            $source_dirs[$type][$extension_path] = $extension_name;
-          }
+    // Import configuration from any enabled extensions with the cm_config_tools
+    // key in their .info.yml file.
+    $module_dirs = $this->moduleHandler->getModuleList();
+    $theme_dirs = $this->themeHandler->listInfo();
+    foreach ([$module_dirs, $theme_dirs] as $extension_dirs) {
+      /** @var \Drupal\Core\Extension\Extension[] $extension_dirs */
+      foreach ($extension_dirs as $extension_name => $extension) {
+        if ($this->getExtensionInfo($extension_name)) {
+          $source_dirs[$extension->getPath()] = $extension_name;
         }
       }
     }
@@ -315,8 +293,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    * well as allow for nicer reporting.
    *
    * @param array $source_dirs
-   *   Array of extension types mapped to arrays of source directories mapped to
-   *   their project names.
+   *   Array of source directories as keys, mapped to their project names.
    * @param string $subdir
    *   The sub-directory of configuration to import. Defaults to
    *   "config/install".
@@ -329,47 +306,45 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
   protected function getSourceStorageWrapper(array $source_dirs, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY) {
     $source_storage = new StorageReplaceDataMappedWrapper($this->activeConfigStorage);
 
-    foreach ($source_dirs as $type => $type_source_dirs) {
-      foreach ($type_source_dirs as $source_dir => $extension_name) {
-        $create_only = $this->getExtensionInfo($type, $extension_name, 'create_only', array());
-        if (is_array($create_only)) {
-          $create_only = array_flip($create_only);
-        }
-        else {
-          $create_only = array();
+    foreach ($source_dirs as $source_dir => $extension_name) {
+      $create_only = $this->getExtensionInfo($extension_name, 'create_only', array());
+      if (is_array($create_only)) {
+        $create_only = array_flip($create_only);
+      }
+      else {
+        $create_only = array();
+      }
+
+      $file_storage = new FileStorage($source_dir . '/' . $subdir);
+      foreach ($file_storage->listAll() as $name) {
+        if ($mapped = $source_storage->getMapping($name)) {
+          throw new ExtensionConfigConflictException("Could not import configuration because the configuration item '$name' is found in both the '$extension_name' and '$mapped' extensions.");
         }
 
-        $file_storage = new FileStorage($source_dir . '/' . $subdir);
-        foreach ($file_storage->listAll() as $name) {
+        // Replace data if it is not listed as create_only (i.e. should only be
+        // installed once), or does not yet exist.
+        $source_storage->map($name, $extension_name);
+        if (!isset($create_only[$name]) || !$source_storage->exists($name)) {
+          $data = $file_storage->read($name);
+          $source_storage->replaceData($name, $data);
+        }
+      }
+
+      $deletes = $this->getExtensionInfo($extension_name, 'delete', array());
+      if (is_array($deletes)) {
+        foreach ($deletes as $name) {
           if ($mapped = $source_storage->getMapping($name)) {
-            throw new ExtensionConfigConflictException("Could not import configuration because the configuration item '$name' is found in both the '$extension_name' and '$mapped' extensions.");
-          }
-
-          // Replace data if it is not listed as create_only (i.e. should only be
-          // installed once), or does not yet exist.
-          $source_storage->map($name, $extension_name);
-          if (!isset($create_only[$name]) || !$source_storage->exists($name)) {
-            $data = $file_storage->read($name);
-            $source_storage->replaceData($name, $data);
-          }
-        }
-
-        $deletes = $this->getExtensionInfo($type, $extension_name, 'delete', array());
-        if (is_array($deletes)) {
-          foreach ($deletes as $name) {
-            if ($mapped = $source_storage->getMapping($name)) {
-              if ($mapped == $extension_name) {
-                throw new ExtensionConfigConflictException("Could not import configuration because the configuration item '$name' is provided by the '$extension_name' extension but also listed for deletion.");
-              }
-              else {
-                throw new ExtensionConfigConflictException("Could not import configuration because the configuration item '$name' is found in both the '$extension_name' and '$mapped' extensions.");
-              }
+            if ($mapped == $extension_name) {
+              throw new ExtensionConfigConflictException("Could not import configuration because the configuration item '$name' is provided by the '$extension_name' extension but also listed for deletion.");
             }
-
-            // Replacing as an empty array simulates an item being deleted.
-            $source_storage->replaceData($name, array());
-            $source_storage->map($name, $extension_name);
+            else {
+              throw new ExtensionConfigConflictException("Could not import configuration because the configuration item '$name' is found in both the '$extension_name' and '$mapped' extensions.");
+            }
           }
+
+          // Replacing as an empty array simulates an item being deleted.
+          $source_storage->replaceData($name, array());
+          $source_storage->map($name, $extension_name);
         }
       }
     }
@@ -381,7 +356,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    * {@inheritdoc}
    */
   public function exportExtension($extension, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY, $all = FALSE, $fully_normalize = FALSE) {
-    if ($extension_dirs = $this->getExtensionDirectories($extension, TRUE)) {
+    if ($extension_dirs = $this->getExtensionDirectories($extension)) {
       return $this->exportExtensionDirectories($extension_dirs, $subdir, $all, $fully_normalize);
     }
     else {
@@ -393,7 +368,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    * {@inheritdoc}
    */
   public function exportAll($subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY, $all = FALSE, $fully_normalize = FALSE) {
-    if ($extension_dirs = $this->getAllExtensionDirectories(TRUE)) {
+    if ($extension_dirs = $this->getAllExtensionDirectories()) {
       return $this->exportExtensionDirectories($extension_dirs, $subdir, $all, $fully_normalize);
     }
     else {
@@ -405,8 +380,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    * Export configuration to extension directories.
    *
    * @param array $extension_dirs
-   *   Array of extension types mapped to arrays of target directories mapped to
-   *   their project names.
+   *   Array of target directories as keys, mapped to their project names.
    * @param string $subdir
    *   The sub-directory of configuration to import.
    * @param bool $all
@@ -428,14 +402,14 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    */
   protected function exportExtensionDirectories($extension_dirs, $subdir, $all, $fully_normalize) {
     $errors = [];
-    $files_written = [];
 
-    foreach ($extension_dirs as $type => $type_source_dirs) {
-      foreach ($type_source_dirs as $source_dir => $extension_name) {
+    foreach ($extension_dirs as $source_dir => $extension_name) {
+      // Determine the type of extension we're dealing with.
+      if ($type = $this->getExtensionType($extension_name, TRUE)) {
         if (strpos($subdir, 'config/') === 0) {
           $subdir_type = substr($subdir, 7);
           // Get the configuration.
-          $info = $this->getExtensionInfo($type, $extension_name, 'config_devel', array(), NULL);
+          $info = $this->getExtensionInfo($extension_name, 'config_devel', array(), NULL, TRUE);
           // Keep backwards compatibility for the old format that config_devel
           // supports.
           if (!isset($info['install'])) {
@@ -444,7 +418,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
 
           if (isset($info[$subdir_type]) && is_array($info[$subdir_type])) {
             // Exclude any create_only items.
-            $create_only = $this->getExtensionInfo($type, $extension_name, 'create_only', array());
+            $create_only = $this->getExtensionInfo($extension_name, 'create_only', array(), TRUE);
             if ($create_only && is_array($create_only)) {
               $create_only = array_flip($create_only);
             }
@@ -472,7 +446,6 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
                       // an existing export, which is just unnecessary change.
                       $data = static::normalizeConfig($name, $data, $fully_normalize);
                       $source_dir_storage->write($name, $data);
-                      $files_written[$extension_name][] = $name;
                     }
                   }
                   else {
@@ -488,10 +461,9 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
           }
         }
       }
-    }
-
-    if (empty($files_written)) {
-      return FALSE;
+      else {
+        $errors[$extension_name][] = "Couldn't export configuration. The '$extension_name' extension was not found.";
+      }
     }
 
     return $errors ? $errors : TRUE;
@@ -500,27 +472,29 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
   /**
    * {@inheritdoc}
    */
-  public function getExtensionInfo($type, $extension_name, $key = NULL, $default = NULL, $parent = 'cm_config_tools') {
-    if ($extension_path = drupal_get_path($type, $extension_name)) {
-      // Info parser service statically caches info files, so it does not
-      // matter that file may already have been parsed by this class.
-      $info_filename = $extension_path . '/' . $extension_name .'.info.yml';
-      $info = $this->infoParser->parse($info_filename);
+  public function getExtensionInfo($extension_name, $key = NULL, $default = NULL, $parent = 'cm_config_tools', $disabled = FALSE) {
+    if ($type = $this->getExtensionType($extension_name, $disabled)) {
+      if ($extension_path = drupal_get_path($type, $extension_name)) {
+        // Info parser service statically caches info files, so it does not
+        // matter that file may already have been parsed by this class.
+        $info_filename = $extension_path . '/' . $extension_name .'.info.yml';
+        $info = $this->infoParser->parse($info_filename);
 
-      if ($key) {
-        if ($parent) {
-          return isset($info[$parent][$key]) ? $info[$parent][$key] : $default;
+        if ($key) {
+          if ($parent) {
+            return isset($info[$parent][$key]) ? $info[$parent][$key] : $default;
+          }
+          else {
+            return isset($info[$key]) ? $info[$key] : $default;
+          }
         }
         else {
-          return isset($info[$key]) ? $info[$key] : $default;
-        }
-      }
-      else {
-        if ($parent) {
-          return array_key_exists($parent, $info);
-        }
-        else {
-          return FALSE;
+          if ($parent) {
+            return array_key_exists($parent, $info);
+          }
+          else {
+            return FALSE;
+          }
         }
       }
     }
@@ -545,33 +519,26 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    */
   public function getExtensionType($extension, $disabled = FALSE) {
     $type = NULL;
-    if ($disabled) {
-      // Retrieve the full file lists prepared in state by
+    if ($this->moduleHandler->moduleExists($extension)) {
+      $type = 'module';
+    }
+    elseif ($this->themeHandler->themeExists($extension)) {
+      $type = 'theme';
+    }
+    elseif (drupal_get_profile() === $extension) {
+      $type = 'profile';
+    }
+    elseif ($disabled) {
+      // If still unknown, retrieve the file list prepared in state by
       // system_rebuild_module_data() and
-      // \Drupal\Core\Extension\ThemeHandlerInterface::rebuildThemeData(). These
-      // are cached by \Drupal\Core\State\State so repeatedly fetching is fine.
-      $state = \Drupal::state();
+      // \Drupal\Core\Extension\ThemeHandlerInterface::rebuildThemeData().
       foreach (['module', 'theme'] as $candidate) {
-        $extension_data = $state->get('system.' . $candidate . '.files', array());
-
-        if (isset($extension_data[$extension])) {
+        if (\Drupal::state()->get('system.' . $candidate . '.files', array())) {
           $type = $candidate;
           break;
         }
       }
     }
-    else {
-      if ($this->moduleHandler->moduleExists($extension)) {
-        $type = 'module';
-      }
-      elseif ($this->themeHandler->themeExists($extension)) {
-        $type = 'theme';
-      }
-      elseif (drupal_get_profile() === $extension) {
-        $type = 'profile';
-      }
-    }
-
 
     return $type;
   }
