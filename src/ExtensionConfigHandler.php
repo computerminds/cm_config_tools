@@ -40,6 +40,16 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
   use StringTranslationTrait;
 
   /**
+   * The indentation used, per level, for each section in an .info.yml file.
+   */
+  const MANIFEST_INDENT = '  ';
+
+  /**
+   * The characters to consider whitespace in an extension's .info.yml file.
+   */
+  const MANIFEST_WHITESPACE_CHARS = " \t\n\r\0\x0B";
+
+  /**
    * The active config storage.
    *
    * @var \Drupal\Core\Config\StorageInterface
@@ -49,7 +59,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
   /**
    * The info parser to parse the extensions' .info.yml files.
    *
-   * @var \Drupal\Core\Extension\InfoParserInterface
+   * @var \Drupal\cm_config_tools\ResettableInfoParser
    */
   protected $infoParser;
 
@@ -451,14 +461,14 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
           foreach ($extension_requirements as $extension_dependency) {
             $dependency_type = $this->getExtensionType($extension_dependency, TRUE);
             if ($extension_dependency_info = $this->getExtensionInfo($dependency_type, $extension_dependency)) {
-              $importable = $extension_dependency_info['managed'] + $extension_dependency_info['unmanaged'] + $extension_dependency_info['implicit'];
+              $dependency_importable = $extension_dependency_info['managed'] + $extension_dependency_info['unmanaged'] + $extension_dependency_info['implicit'];
 
               // Unmanaged items could be changed, so we have to export those.
               if ($with_unmanaged && $extension_dependency_info['unmanaged']) {
-                $importable = array_diff_key($importable, $extension_dependency_info['unmanaged']);
+                $dependency_importable = array_diff_key($dependency_importable, $extension_dependency_info['unmanaged']);
               }
 
-              $exclude['config'] += $importable;
+              $exclude['config'] += $dependency_importable;
             }
           }
         }
@@ -491,6 +501,15 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
     if (!isset($checked[$config_name])) {
       $config_dependencies = $this->configManager->getConfigFactory()->get($config_name)->get('dependencies');
       if ($config_dependencies && is_array($config_dependencies)) {
+        // Handle any 'enforced' dependencies.
+        if (isset($config_dependencies['enforced'])) {
+          foreach ($config_dependencies['enforced'] as $dependency_type => $type_enforced) {
+            foreach ($type_enforced as $enforced) {
+              $config_dependencies[$dependency_type][] = $enforced;
+            }
+          }
+        }
+
         foreach ($config_dependencies as $dependency_type => $type_dependencies) {
           // Use associative array to avoid duplicates.
           $config_dependencies[$dependency_type] = array_combine($type_dependencies, $type_dependencies);
@@ -547,12 +566,14 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    *  - Already included explicitly in cm_config_tools.managed
    *  - Explicitly ignored in the cm_config_tools.unmanaged
    *
+   * @TODO Implement $all == FALSE
+   *
    * @param string $extension
    *   The machine name of the project to find suggested config for.
    * @param bool $all
    *   By default, get all dependencies. Optionally set to FALSE to exclude
    *   those that are already provided by listed dependencies of the extension
-   *   (whether they are directly or indirectly dependent). @TODO Implement $all == FALSE
+   *   (whether they are directly or indirectly dependent).
    * @param int $recursion_limit
    *   Optionally limit the levels of recursion.
    *
@@ -613,118 +634,131 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
   }
 
   /**
-   * Add dependencies to an extension's .info.yml file.
+   * Add items to an extension's .info.yml file, such as dependencies.
    *
    * This does not just parse and encode YAML, because we want to preserve
    * comments and empty lines. Instead it supports the expected 'normal' format
-   * of a Drupal extension's .info.yml file, finding the dependencies block and
-   * inserting the new dependencies. If the block has no comments or empty
-   * lines, and the existing dependencies are sorted, then the new dependencies
-   * will be merged and sorted in amongst them.
+   * of a Drupal extension's .info.yml file, finding the target block and
+   * inserting the new items. Items can be specified to remove from that block
+   * too. If the block has no comments or empty lines, and the existing items
+   * are sorted, then the new items will be merged and sorted in amongst them.
    *
    * @param string $info_filename
    *   The info filename.
-   * @param string[] $key
-   *   An array of keys that the dependencies should be placed within.
-   * @param string[] $dependencies
-   *   An array of module dependencies to add.
+   * @param string|string[] $key
+   *   An array of keys that the items should be placed within, or a single
+   *   string for a top-level key.
+   * @param string[] $items
+   *   An array of items to add.
    * @param string[] $remove
-   *   An array of module dependencies to remove. @TODO Implement this.
+   *   An array of items to remove.
    */
-  protected function updateManifest($info_filename, $key, $dependencies, $remove = array()) {
-    if (is_array($key)) {
-      $key = reset($key); // @TODO Implement sub-keys.
-    }
-
+  protected function updateManifest($info_filename, $key, $items, $remove = array()) {
     $contents = file_get_contents($info_filename);
+
+    // Pad sub-key names appropriately.
+    if (!is_array($key)) {
+      $key = array($key);
+    }
+    $key = array_values($key);
+    foreach ($key as $level => $key_name) {
+      $key[$level] = str_repeat(self::MANIFEST_INDENT, $level) . trim($key_name);
+    }
+    $item_indentation = str_repeat(self::MANIFEST_INDENT, max(array_keys($key)) + 1);
 
     $contents = str_replace(array("\r\n", "\r"), "\n", $contents);
     $lines = explode("\n", $contents);
-    $dependencies_row = NULL;
+    $block_start = NULL;
+    $block_end = max(array_keys($lines)) + 1;
+    $block_lines = $lines;
 
-    // Process in reverse, in case of duplicate keys (since the last value
-    // would 'win').
-    $reverse_lines = array_reverse($lines, TRUE);
+    $level = 0;
+    while ($subkey = array_shift($key)) {
+      if (strpos(implode("\n", $block_lines), $subkey . ':') !== FALSE) {
+        $block_info = $this->findManifestBlock($block_lines, $subkey, $level++);
+        $plain_block = $block_info['plain'];
+        $block_start = $block_info['start'];
+        $block_end = $block_info['end'];
 
-    if (strpos($contents, $key . ':') !== FALSE) {
-      $whitespace_chars = " \t\n\r\0\x0B";
-      $last_root_row = count($lines);
-      $plain_block = TRUE;
-      foreach ($reverse_lines as $i => $row) {
-        if ($row) {
-          // Trim any comment from the row.
-          $comment = strpos($row, '#');
-          if ($comment) {
-            $row = substr($row, 0, $comment-1);
-          }
-          elseif ($comment === 0) {
-            // This row is just a comment.
-            $plain_block = FALSE;
-            continue;
-          }
-
-          // Trim whitespace and braces to the right of the row.
-          $row = rtrim($row, $whitespace_chars . '{}');
-          if ($row) {
-            if (strpos($whitespace_chars, $row[0]) === FALSE) {
-              if ($row == $key . ':') {
-                // Dependencies row found.
-                $dependencies_row = $i;
-                break;
-              }
-              else {
-                // This is a new root value, reset the 'plain block' variable.
-                $plain_block = TRUE;
-                $last_root_row = $i;
-              }
-            }
-            // Else case: row contains a value, just not a root one.
-          }
-          else {
-            $plain_block = FALSE;
-          }
-        }
-        else {
-          $plain_block = FALSE;
-        }
+        $block_lines = array_slice($lines, $block_start, ($block_end - $block_start), TRUE);
       }
-
-      // If there were no empty lines or comments within the dependencies
-      // block then the dependencies can be merged in nicely for sorting,
-      // except when the existing dependencies themslves are unsorted.
-      if (isset($dependencies_row) && $plain_block) {
-        $existing_dependencies = array();
-        $insert_before = $last_root_row;
-        for ($i = ($dependencies_row + 1); $i < $last_root_row; $i++) {
-          $row = ltrim($lines[$i], $whitespace_chars . '-');
-          $prev_row = $i - $dependencies_row - 2;
-          if (empty($existing_dependencies) || ($row > $existing_dependencies[$prev_row])) {
-            $existing_dependencies[] = $row;
-          }
-          else {
-            unset($insert_before);
+      else {
+        // Append subkey, but retaining any trailing whitespace.
+        $insert_at = $block_end;
+        for ($i = ($insert_at - 1); $i > 0; $i--) {
+          if ($row = $lines[$i]) {
+            $row = trim($row);
+            if ($row) {
+              $insert_at = $i + 1;
+              break;
+            }
           }
         }
-
-        if (isset($insert_before)) {
-          $dependencies = array_merge($dependencies, $existing_dependencies);
-        }
+        $lines = array_merge(array_slice($lines, 0, $insert_at), array($subkey . ':'), array_slice($lines, $insert_at));
+        $block_lines = array();
+        $plain_block = TRUE;
+        $block_start = $insert_at;
+        $block_end = $insert_at + 1;
       }
     }
 
-    sort($dependencies);
-    $dependencies = '  - ' . implode("\n  - ", $dependencies);
+    // If there were no empty lines or comments within this block then the
+    // items within it can be merged in nicely for sorting, except when the
+    // existing items themslves are unsorted.
+    if (isset($block_start) && !empty($plain_block)) {
+      $existing_items = array();
+      $insert_before = $block_end;
+      for ($i = ($block_start + 1); $i < $block_end; $i++) {
+        $row = ltrim($lines[$i], self::MANIFEST_WHITESPACE_CHARS . '-');
+        $prev_row = $i - $block_start - 2;
+        if (empty($existing_items) || ($row > $existing_items[$prev_row])) {
+          $existing_items[] = $row;
+        }
+        else {
+          unset($insert_before);
+        }
+      }
 
-    if (isset($dependencies_row)) {
-      $insert_at = $dependencies_row + 1;
+      if (isset($insert_before)) {
+        if ($remove) {
+          $trimmed_existing_items = $existing_items;
+          foreach ($existing_items as $i => $existing_item) {
+            $comment_pos = strpos($existing_item, '#');
+            if ($comment_pos !== FALSE) {
+              $existing_item = substr($existing_item, 0, $comment_pos);
+            }
+            $trimmed_existing_items[$i] = rtrim($existing_item, self::MANIFEST_WHITESPACE_CHARS);
+          }
+
+          while ($item_to_remove = array_pop($remove)) {
+            $i = array_search($item_to_remove, $trimmed_existing_items, TRUE);
+            if ($i !== FALSE) {
+              unset($existing_items[$i]);
+            }
+          }
+        }
+
+        $items = array_merge($items, $existing_items);
+      }
+    }
+
+    if ($items) {
+      sort($items);
+      $items = $item_indentation . '- ' . implode("\n" . $item_indentation . '- ', $items);
+    }
+
+    if (isset($block_start)) {
+      $insert_at = $block_start + 1;
       if (!isset($insert_before)) {
         $insert_before = $insert_at;
       }
     }
     else {
       // Append to the file, but retaining any trailing whitespace.
+      // @TODO This block of logic should never be reached, and would not cope
+      // with multiple levels of keys anyway either.
       $insert_at = count($lines);
-      foreach ($reverse_lines as $i => $row) {
+      foreach (array_reverse($lines, TRUE) as $i => $row) {
         if ($row) {
           $row = trim($row);
           if ($row) {
@@ -734,11 +768,109 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
         }
       }
       $insert_before = $insert_at;
-      $dependencies = $key . ":\n" . $dependencies;
+      $items = $key[0] . ":\n" . $items;
     }
 
-    $lines = array_merge(array_slice($lines, 0, $insert_at), array($dependencies), array_slice($lines, $insert_before));
+    if ($items) {
+      $lines = array_merge(array_slice($lines, 0, $insert_at), array($items), array_slice($lines, $insert_before));
+    }
+
+    // Remove unused items from the appropriate block.
+    for ($i = ($block_start + 1); $remove && $i < $block_end; $i++) {
+      $row = ltrim($lines[$i], self::MANIFEST_WHITESPACE_CHARS . '-');
+      $comment_pos = strpos($row, '#');
+      if ($comment_pos !== FALSE) {
+        $row = substr($row, 0, $comment_pos);
+      }
+      $row = rtrim($row, self::MANIFEST_WHITESPACE_CHARS);
+      if (isset($remove[$row])) {
+        unset($lines[$i]);
+        unset($remove[$row]);
+      }
+    }
+
     file_put_contents($info_filename, implode("\n", $lines));
+
+    $this->infoParser->reset($info_filename);
+  }
+
+  /**
+   * Detect the block for the supplied key amongst the lines.
+   *
+   * @param string[] $lines
+   *   Lines to hunt amongst.
+   * @param string $keys
+   *   The key to look for.
+   * @param int $indent_level
+   *   The level of indentation that the current lines are at.
+   *
+   * @return array
+   *   An array of information, with the following keys: 'start', 'end' and
+   *   'plain'.
+   */
+  protected function findManifestBlock($lines, $key, $indent_level = 0) {
+    $block_start = NULL;
+    $content_found = FALSE;
+    $plain_block = TRUE;
+    // Process in reverse, in case of duplicate keys (since the last value
+    // would 'win').
+    $reverse_lines = array_reverse($lines, TRUE);
+    $block_end = max(array_keys($reverse_lines)) + 1;
+    foreach ($reverse_lines as $i => $row) {
+      if ($row) {
+        // Trim any comment from the row.
+        $comment = strpos($row, '#');
+        if ($comment) {
+          $row = substr($row, 0, $comment-1);
+        }
+        elseif ($comment === 0) {
+          // This row is just a comment.
+          $plain_block = FALSE;
+          continue;
+        }
+
+        // Trim whitespace and braces to the right of the row.
+        $row = rtrim($row, self::MANIFEST_WHITESPACE_CHARS . '{}');
+        if ($row) {
+          $content_found = TRUE;
+          $total_indent = $indent_level * strlen(self::MANIFEST_INDENT);
+          $whitespace_matches_indent = ((strlen($row) - strlen(ltrim($row, self::MANIFEST_WHITESPACE_CHARS))) === $total_indent);
+          if ($whitespace_matches_indent) {
+            if ($row == $key . ':') {
+              // Row for this key found.
+              $block_start = $i;
+              break;
+            }
+            else {
+              // This is a new value for the indent level, so reset the 'plain
+              // block' variable.
+              $plain_block = TRUE;
+              $block_end = $i;
+            }
+          }
+          // Else case: row contains a value, just not one for the current
+          // indent level.
+        }
+        elseif ($content_found) {
+          $plain_block = FALSE;
+        }
+        else {
+          $block_end--;
+        }
+      }
+      elseif ($content_found) {
+        $plain_block = FALSE;
+      }
+      else {
+        $block_end--;
+      }
+    }
+
+    return array(
+      'start' => $block_start,
+      'end' => $block_end,
+      'plain' => $plain_block,
+    );
   }
 
   /**
@@ -789,20 +921,17 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    */
   protected function exportExtensionDirectories($extension_dirs, $with_dependencies, $subdir, $force_unmanaged, $fully_normalize) {
     $errors = [];
-    $files_written = [];
+    $files_changed = [];
     $config_factory = $this->configManager->getConfigFactory();
 
     foreach ($extension_dirs as $type => $type_source_dirs) {
       foreach ($type_source_dirs as $source_dir => $extension_name) {
+        $info_filename = NULL;
+
         // Get the configuration.
         $info = $this->getExtensionInfo($type, $extension_name);
         // Implicit dependencies will get re-calculated and added to this array.
         $exportable = $info['managed'] + $info['unmanaged'];
-
-        $implicit = $info['implicit'];
-        // @TODO Delete files of previously-implicit dependencies and
-        // replace the list in the info file (removing lines and adding
-        // lines where necessary). But avoid unnecessary change if possible?
 
         if ($exportable) {
           // Include any config dependencies, which will get added to the array
@@ -816,15 +945,42 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
               $module_data = system_rebuild_module_data();
               if (isset($module_data[$extension_name])) {
                 if ($missing_dependencies = array_diff($dependencies['module'], array_keys($module_data[$extension_name]->requires))) {
+                  // Minimise the missing dependencies to remove any that
+                  // already depend on each other anyway.
+                  $minimised = $missing_dependencies;
+                  foreach ($missing_dependencies as $missing_dependency) {
+                    $minimised = array_diff($minimised, array_keys($module_data[$missing_dependency]->requires));
+                  }
+
                   $info_filename = $module_data[$extension_name]->getPathname();
-                  $this->updateManifest($info_filename, array('dependencies'), $missing_dependencies);
-                  $files_written[$extension_name][] = $info_filename;
+                  $this->updateManifest($info_filename, 'dependencies', $minimised);
+                  // Having changed dependencies, we need to reset the module
+                  // data. This is not ideal, but if we have other modules that
+                  // will be processed in later iterations, they need the latest
+                  // dependency data.
+                  drupal_static_reset('system_rebuild_module_data');
+                  $files_changed[$extension_name][] = $info_filename;
                 }
               }
             }
 
             if (!empty($dependencies['config'])) {
+              $dependencies['config'] = array_combine($dependencies['config'], $dependencies['config']);
               $exportable = $exportable + $dependencies['config'];
+
+              // Delete files of previously-implicit dependencies and replace
+              // the list in the info file (removing lines and adding lines
+              // where necessary).
+              $original_implicit = $info['implicit'];
+              if ($dependencies['config'] != $original_implicit) {
+                $no_longer_implicit = array_diff($original_implicit, $dependencies['config']);
+                $newly_implicit = array_diff($dependencies['config'], $original_implicit);
+
+                if (!isset($info_filename)) {
+                  $info_filename = drupal_get_path($type, $extension_name) . '/' . $extension_name . '.info.yml';
+                }
+                $this->updateManifest($info_filename, array('cm_config_tools', 'implicit'), $newly_implicit, $no_longer_implicit);
+              }
             }
           }
 
@@ -847,11 +1003,18 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
                   // ... oh, except views which actually relies on keys' order.
                   $data = static::normalizeConfig($name, $data, $fully_normalize);
                   $source_dir_storage->write($name, $data);
-                  $files_written[$extension_name][] = $name;
+                  $files_changed[$extension_name][] = $name;
                 }
               }
               else {
                 $errors[$extension_name][] = 'Config ' . $name . ' not found in active storage.';
+              }
+            }
+
+            if (!empty($no_longer_implicit)) {
+              foreach ($no_longer_implicit as $name) {
+                $source_dir_storage->delete($name);
+                $files_changed[$extension_name][] = $name;
               }
             }
           }
@@ -863,7 +1026,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
       }
     }
 
-    if (empty($files_written)) {
+    if (empty($files_changed)) {
       return FALSE;
     }
 
@@ -886,7 +1049,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
         if (in_array($key, $array_info, TRUE)) {
           if (isset($info['cm_config_tools'][$key]) && $info['cm_config_tools'][$key] && is_array($info['cm_config_tools'][$key])) {
             $info['cm_config_tools'][$key] = array_values($info['cm_config_tools'][$key]);
-            $info['cm_config_tools'][$key] = array_combine($info['cm_config_tools'][$key], $info['cm_config_tools'][$key]);
+            return array_combine($info['cm_config_tools'][$key], $info['cm_config_tools'][$key]);
           }
           else {
             return $default;
@@ -900,15 +1063,15 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
         if (array_key_exists('cm_config_tools', $info)) {
           // Massage info to be in a valid and useful format.
           foreach ($array_info as $info_key) {
-            if (isset($info[$info_key]) && $info[$info_key] && is_array($info[$info_key])) {
-              $info[$info_key] = array_values($info[$info_key]);
-              $info[$info_key] = array_combine($info[$info_key], $info[$info_key]);
+            if (isset($info['cm_config_tools'][$info_key]) && $info['cm_config_tools'][$info_key] && is_array($info['cm_config_tools'][$info_key])) {
+              $info['cm_config_tools'][$info_key] = array_values($info['cm_config_tools'][$info_key]);
+              $info['cm_config_tools'][$info_key] = array_combine($info['cm_config_tools'][$info_key], $info['cm_config_tools'][$info_key]);
             }
             else {
-              $info[$info_key] = array();
+              $info['cm_config_tools'][$info_key] = array();
             }
           }
-          return $info;
+          return $info['cm_config_tools'];
         }
         else {
           return FALSE;

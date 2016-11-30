@@ -47,9 +47,6 @@ interface ExtensionConfigHandlerInterface {
    * Configuration should be imported from any enabled projects that contain a
    * 'cm_config_tools' key in their .info.yml files (even if it is empty).
    *
-   * @TODO Do we need somewhere to warn of unsupported behaviour if multiple
-   * extensions with the cm_config_tools key are found?
-   *
    * @param bool $disabled
    *   Optionally check for disabled modules and themes too.
    *
@@ -168,7 +165,7 @@ interface ExtensionConfigHandlerInterface {
    * cm_config_tools.managed.
    *
    * @param string $extension
-   *   Extemson name to export to.
+   *   Extension name to export to.
    * @param array $config_names
    *
    * @return bool
