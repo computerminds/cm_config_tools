@@ -341,6 +341,7 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    */
   protected function getSourceStorageWrapper(array $source_dirs, $subdir = InstallStorage::CONFIG_INSTALL_DIRECTORY, $force_unmanaged = FALSE) {
     $source_storage = new StorageReplaceDataMappedWrapper($this->activeConfigStorage);
+    $profile = drupal_get_profile();
 
     foreach ($source_dirs as $type => $type_source_dirs) {
       foreach ($type_source_dirs as $source_dir => $extension_name) {
@@ -355,8 +356,18 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
           // Replace data if it is not listed as unmanaged (i.e. should only be
           // installed once), or does not yet exist.
           if (!isset($info['unmanaged'][$name]) || !$source_storage->exists($name)) {
-            if ($mapped = $source_storage->getMapping($name)) {
-              throw new ExtensionConfigConflictException("Could not import configuration because the configuration item '$name' is found in both the '$extension_name' and '$mapped' extensions.");
+            $mapped = $source_storage->getMapping($name);
+            // Install profiles are allowed to override config from other
+            // extensions.
+            if ($mapped) {
+              if ($mapped == $profile) {
+                // Config was already written from install profile, or is about
+                // to be, which is allowed.
+                continue;
+              }
+              elseif ($extension_name != $profile) {
+                throw new ExtensionConfigConflictException("Could not import configuration because the configuration item '$name' is found in both the '$extension_name' and '$mapped' extensions.");
+              }
             }
 
             // Note: Any config marked as unmanaged that already exists will get
