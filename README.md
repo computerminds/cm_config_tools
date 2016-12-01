@@ -26,7 +26,7 @@ what to export.
 Note that the `drush config-devel-module-dependencies` command mentioned below
 requires the `config_devel` module and
 [a patch](https://www.drupal.org/files/issues/config_devel-drush_config_list-2319193-10.patch).
-Development on an solution within cm_config_tools is underway.
+Development on a solution within cm_config_tools is underway.
 
 1. **Including config in a module**
    
@@ -75,6 +75,7 @@ Development on an solution within cm_config_tools is underway.
    ```php
    // Import configuration from all projects containing a 'cm_config_tools' key.
    \Drupal::service('cm_config_tools')->importAll();
+   ```
    
 4. **Deleting config**
     
