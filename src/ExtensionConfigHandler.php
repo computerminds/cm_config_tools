@@ -960,7 +960,9 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
                   // already depend on each other anyway.
                   $minimised = $missing_dependencies;
                   foreach ($missing_dependencies as $missing_dependency) {
-                    $minimised = array_diff($minimised, array_keys($module_data[$missing_dependency]->requires));
+                    if (isset($module_data[$missing_dependency])) {
+                      $minimised = array_diff($minimised, array_keys($module_data[$missing_dependency]->requires));
+                    }
                   }
 
                   $info_filename = $module_data[$extension_name]->getPathname();
