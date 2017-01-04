@@ -11,6 +11,8 @@ use Drupal\cm_config_tools\Exception\ExtensionConfigConflictException;
 use Drupal\cm_config_tools\Exception\ExtensionConfigException;
 use Drupal\cm_config_tools\Exception\ExtensionConfigLockedException;
 use Drupal\config_update\ConfigDiffInterface;
+use Drupal\config_update\ConfigListInterface;
+use Drupal\config_update\ConfigRevertInterface;
 use Drupal\Core\Config\ConfigException;
 use Drupal\Core\Config\ConfigImporter;
 use Drupal\Core\Config\ConfigManagerInterface;
@@ -21,6 +23,7 @@ use Drupal\Core\Config\StorageComparerInterface;
 use Drupal\Core\Config\StorageException;
 use Drupal\Core\Config\StorageInterface;
 use Drupal\Core\Config\TypedConfigManagerInterface;
+use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Extension\Extension;
 use Drupal\Core\Extension\InfoParserInterface;
 use Drupal\Core\Extension\ModuleHandlerInterface;
@@ -127,6 +130,27 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
   protected $dispatcher;
 
   /**
+   * The config listing service.
+   *
+   * @var \Drupal\config_update\ConfigListInterface
+   */
+  protected $configLister;
+
+  /**
+   * The service for reverting and importing config.
+   *
+   * @var \Drupal\config_update\ConfigRevertInterface
+   */
+  protected $configReverter;
+
+  /**
+   * The entity type manager.
+   *
+   * @var \Drupal\Core\Entity\EntityTypeManagerInterface
+   */
+  protected $entityTypeManager;
+
+  /**
    * Constructs a ExtensionConfigHandler.
    *
    * @param \Drupal\Core\Config\StorageInterface $active_config_storage
@@ -153,8 +177,14 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
    *   The event dispatcher.
    * @param \Drupal\Core\StringTranslation\TranslationInterface $translation
    *   String translation service.
+   * @param \Drupal\config_update\ConfigListInterface $config_lister
+   *   Config listing service.
+   * @param \Drupal\config_update\ConfigRevertInterface $config_reverter
+   *   Service for reverting and importing config.
+   * @param \Drupal\Core\Entity\EntityTypeManagerInterface $entity_type_manager
+   *   The entity type manager.
    */
-  public function __construct(StorageInterface $active_config_storage, InfoParserInterface $info_parser, ModuleHandlerInterface $module_handler, ModuleInstallerInterface $module_installer, ThemeHandlerInterface $theme_handler, ConfigManagerInterface $config_manager, ConfigDiffInterface $config_diff, LockBackendInterface $lock, StateInterface $state, TypedConfigManagerInterface $typed_config, EventDispatcherInterface $dispatcher, TranslationInterface $translation) {
+  public function __construct(StorageInterface $active_config_storage, InfoParserInterface $info_parser, ModuleHandlerInterface $module_handler, ModuleInstallerInterface $module_installer, ThemeHandlerInterface $theme_handler, ConfigManagerInterface $config_manager, ConfigDiffInterface $config_diff, LockBackendInterface $lock, StateInterface $state, TypedConfigManagerInterface $typed_config, EventDispatcherInterface $dispatcher, TranslationInterface $translation, ConfigListInterface $config_lister, ConfigRevertInterface $config_reverter, EntityTypeManagerInterface $entity_type_manager) {
     $this->activeConfigStorage = $active_config_storage;
     $this->infoParser = $info_parser;
     $this->moduleHandler = $module_handler;
@@ -167,6 +197,9 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
     $this->typedConfigManager = $typed_config;
     $this->dispatcher = $dispatcher;
     $this->stringTranslation = $translation;
+    $this->configLister = $config_lister;
+    $this->configReverter = $config_reverter;
+    $this->entityTypeManager = $entity_type_manager;
   }
 
   /**
@@ -1176,6 +1209,50 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
       ksort($config);
     }
     return $config;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function revert($names) {
+    if (is_string($names)) {
+      $names = explode(',', $names);
+    }
+
+    $names = array_map('trim', $names);
+    $errors = [];
+    if ($names) {
+      list($active_list, , ) = $this->configLister->listConfig('type', 'system.all');
+
+      foreach ($names as $full_name) {
+        // ConfigReverter methods require the 'short' name for typed config,
+        // otherwise 'system.simple'.
+        if ($type = $this->configLister->getTypeNameByConfigName($full_name)) {
+          /** @var \Drupal\Core\Config\Entity\ConfigEntityTypeInterface $definition */
+          $definition = $this->entityTypeManager->getDefinition($type);
+          $prefix = $definition->getConfigPrefix() . '.';
+          if (strpos($full_name, $prefix) === 0) {
+            $name = substr($full_name, strlen($prefix));
+          }
+          else {
+            $errors[$full_name] = t('Config @name does not match expected config prefix.', array('@name' => $full_name));
+            continue;
+          }
+        }
+        else {
+          $type = 'system.simple';
+          $name = $full_name;
+        }
+
+        $method = in_array($full_name, $active_list) ? 'revert' : 'import';
+        if (!$this->configReverter->{$method}($type, $name)) {
+          $errors[$full_name] = t('Config @name could not be reverted.', array('@name' => $full_name));
+        }
+      }
+    }
+    else {
+      $errors[] = t('No configuration specified to revert.');
+    }
   }
 
 }

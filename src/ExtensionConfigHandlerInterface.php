@@ -263,4 +263,25 @@ interface ExtensionConfigHandlerInterface {
    */
   public static function normalizeConfig($config_name, $config, $sort_and_filter = TRUE, $ignore = array('uuid', '_core'));
 
+  /**
+   * Revert or import config, based on full config file name(s).
+   *
+   * This could really just be part of config_update. The only 'magic' this
+   * provides is to translate from a full config name (including prefix and
+   * provider) to the 'short' name, which the methods on ConfigReverter use, and
+   * to allow reverting multiple config items in one operation.
+   *
+   * @see \Drupal\config_update\ConfigReverter::import()
+   * @see \Drupal\config_update\ConfigReverter::revert()
+   *
+   * @param string|string[] $names
+   *   The full names of configuration to import, that include the config prefix
+   *   and/or config provider. This may be supplied as a single string, an array
+   *   of names, or a comma-separated list (with or without whitespace).
+   *
+   * @return array
+   *   An array of errors, mapped to configuration name(s).
+   */
+  public function revert($names);
+
 }
