@@ -18,7 +18,7 @@ Example usage from PHP (e.g. for an update hook):
 Details
 ------------------------
 
-Configuration can be exported to code from active storage using the
+Configuration can be exported to code from active storage using the 
 cm_config_tools module. This workflow allows precise control over what config to
 export, although it does require you as the developer to find and decide exactly
 what to export.
@@ -40,9 +40,9 @@ what to export.
    This lists anything that is dependent on the config you have already listed
    (e.g. field instances for a node type).
    
-   Copy the config items from the list
-   that you want to export into the `managed` section of your .info.yml file. 
-   Dependencies will then get added where necessary when exporting.
+   Copy the config items from the list that you want to export into the 
+   `managed` section of your .info.yml file. Dependencies will then get added 
+   where necessary when exporting.
    
    Note that you may want to run this command again, to check for config 
    dependent on your newly added config.
