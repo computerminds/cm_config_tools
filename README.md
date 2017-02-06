@@ -35,17 +35,17 @@ what to export.
    
    ```bash
    drush cm-config-tools-suggest MYMODULE
-      ```
+   ```
      
    This lists anything that is dependent on the config you have already listed
-   (e.g. field instances for a node type), as well as the dependencies of that
-   (e.g. field storage config, but also view mode settings). So copy the config
-   you want to export into that `managed` section.
-    
-   Dependencies will get added where necessary when exporting.
+   (e.g. field instances for a node type).
    
-   Note that you may want to run that command again when done to check there are not more config names you should
-   list for export.
+   Copy the config items from the list
+   that you want to export into the `managed` section of your .info.yml file. 
+   Dependencies will then get added where necessary when exporting.
+   
+   Note that you may want to run this command again, to check for config 
+   dependent on your newly added config.
    
 2. **Exporting config**
    
@@ -107,10 +107,9 @@ config, allowing only specific config to be controlled.
 ### Choosing config to export ###
 
 It is the developer's responsibility to be aware of what configuration should be
-exported to a module (or profile), but here is some help! Start by adding items you know you
+exported to a module, but here is some help! Start by adding items you know you
 want, such as `node.type.article`. Then run the following drush command, which
-will list anything that is dependent on the listed config, and all the
-dependencies:
+will list anything that is dependent on the listed config:
 
 ```bash
 drush cm-config-tools-suggest MYMODULE
