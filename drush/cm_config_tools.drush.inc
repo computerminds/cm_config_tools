@@ -108,6 +108,22 @@ function cm_config_tools_drush_command() {
     'aliases' => array('cmcr'),
   );
 
+  $items['cm-config-tools-suggest'] = array(
+    'description' => "List the dependencies of an extension's default configuration.",
+    'arguments' => array(
+      'module' => 'Module machine name.',
+    ),
+    'options' => array(
+    ),
+    'examples' => array(
+      'drush cm-config-tools-suggest MODULE_NAME' => 'List the dependencies of the configuration',
+    ),
+    'aliases' => array('cmcs'),
+    'outputformat' => array(
+      'default' => 'yaml',
+    ),
+  );
+
   return $items;
 }
 
@@ -377,4 +393,12 @@ function drush_cm_config_tools_revert($names) {
   else {
     return drush_log(dt('Configuration items successfully reverted.'), LogLevel::SUCCESS);
   }
+}
+
+/**
+ * Drush command callback.
+ */
+function drush_cm_config_tools_suggest($extension) {
+  $dependencies = \Drupal::service('cm_config_tools')->getExtensionConfigSuggestions($extension);
+  return $dependencies;
 }

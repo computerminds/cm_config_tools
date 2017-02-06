@@ -23,11 +23,6 @@ cm_config_tools module. This workflow allows precise control over what config to
 export, although it does require you as the developer to find and decide exactly
 what to export.
 
-Note that the `drush config-devel-module-dependencies` command mentioned below
-requires the `config_devel` module and
-[a patch](https://www.drupal.org/files/issues/config_devel-drush_config_list-2319193-10.patch).
-Development on a solution within cm_config_tools is underway.
-
 1. **Including config in a module**
    
    Add config items names to the `managed` subsection of the `cm_config_tools`
@@ -39,9 +34,9 @@ Development on a solution within cm_config_tools is underway.
    need:
    
    ```bash
-   drush config-devel-module-dependencies MYMODULE --active=1 --direction=both
-   ```
-   
+   drush cm-config-tools-suggest MYMODULE
+      ```
+     
    This lists anything that is dependent on the config you have already listed
    (e.g. field instances for a node type), as well as the dependencies of that
    (e.g. field storage config, but also view mode settings). So copy the config
@@ -49,8 +44,7 @@ Development on a solution within cm_config_tools is underway.
     
    Dependencies will get added where necessary when exporting.
    
-   Note that you may want to run that `drush config-devel-module-dependencies`
-   command again when done to check there are not more config names you should
+   Note that you may want to run that command again when done to check there are not more config names you should
    list for export.
    
 2. **Exporting config**
@@ -113,13 +107,13 @@ config, allowing only specific config to be controlled.
 ### Choosing config to export ###
 
 It is the developer's responsibility to be aware of what configuration should be
-exported to a module, but here is some help! Start by adding items you know you
+exported to a module (or profile), but here is some help! Start by adding items you know you
 want, such as `node.type.article`. Then run the following drush command, which
 will list anything that is dependent on the listed config, and all the
 dependencies:
 
 ```bash
-drush config-devel-module-dependencies MYMODULE --active=1 --direction=both
+drush cm-config-tools-suggest MYMODULE
 ```
 
 Other related configuration might also be found by running:
@@ -140,5 +134,5 @@ SELECT * FROM `config` WHERE `data` LIKE '%article%';
 
 `drush cmce` is the alias for `drush cm-config-tools-export`.  
 `drush cmci` is the alias for `drush cm-config-tools-import`.
-`drush cd-md` is the alias for `drush config-devel-module-dependencies`.  
+`drush cmcs` is the alias for `drush cm-config-tools-suggest`.  
 `drush cdel` is the alias for `drush config-delete`.  
