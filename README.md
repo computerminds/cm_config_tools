@@ -18,15 +18,10 @@ Example usage from PHP (e.g. for an update hook):
 Details
 ------------------------
 
-Configuration can be exported to code from active storage using the
+Configuration can be exported to code from active storage using the 
 cm_config_tools module. This workflow allows precise control over what config to
 export, although it does require you as the developer to find and decide exactly
 what to export.
-
-Note that the `drush config-devel-module-dependencies` command mentioned below
-requires the `config_devel` module and
-[a patch](https://www.drupal.org/files/issues/config_devel-drush_config_list-2319193-10.patch).
-Development on a solution within cm_config_tools is underway.
 
 1. **Including config in a module**
    
@@ -39,19 +34,18 @@ Development on a solution within cm_config_tools is underway.
    need:
    
    ```bash
-   drush config-devel-module-dependencies MYMODULE --active=1 --direction=both
+   drush cm-config-tools-suggest MYMODULE
    ```
-   
+     
    This lists anything that is dependent on the config you have already listed
-   (e.g. field instances for a node type), as well as the dependencies of that
-   (e.g. field storage config, but also view mode settings). So copy the config
-   you want to export into that `managed` section.
-    
-   Dependencies will get added where necessary when exporting.
+   (e.g. field instances for a node type).
    
-   Note that you may want to run that `drush config-devel-module-dependencies`
-   command again when done to check there are not more config names you should
-   list for export.
+   Copy the config items from the list that you want to export into the 
+   `managed` section of your .info.yml file. Dependencies will then get added 
+   where necessary when exporting.
+   
+   Note that you may want to run this command again, to check for config 
+   dependent on your newly added config.
    
 2. **Exporting config**
    
@@ -115,11 +109,10 @@ config, allowing only specific config to be controlled.
 It is the developer's responsibility to be aware of what configuration should be
 exported to a module, but here is some help! Start by adding items you know you
 want, such as `node.type.article`. Then run the following drush command, which
-will list anything that is dependent on the listed config, and all the
-dependencies:
+will list anything that is dependent on the listed config:
 
 ```bash
-drush config-devel-module-dependencies MYMODULE --active=1 --direction=both
+drush cm-config-tools-suggest MYMODULE
 ```
 
 Other related configuration might also be found by running:
@@ -140,5 +133,5 @@ SELECT * FROM `config` WHERE `data` LIKE '%article%';
 
 `drush cmce` is the alias for `drush cm-config-tools-export`.  
 `drush cmci` is the alias for `drush cm-config-tools-import`.
-`drush cd-md` is the alias for `drush config-devel-module-dependencies`.  
+`drush cmcs` is the alias for `drush cm-config-tools-suggest`.  
 `drush cdel` is the alias for `drush config-delete`.  
