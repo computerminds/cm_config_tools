@@ -166,7 +166,7 @@ function drush_cm_config_tools_import() {
   if ($extension_dirs && ($storage_comparer = $helper->getStorageComparer($extension_dirs, $subdir, $force_unmanaged))) {
     if ($preview = drush_get_option('preview', 'table')) {
       if ($preview == 'diff') {
-        drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs);
+        drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs, $subdir);
       }
       else {
         drush_cm_config_tools_preview_table($storage_comparer);
@@ -216,7 +216,7 @@ function _drush_cm_config_tools_import(ConfigDiffStorageComparer $storage_compar
  * @param \Drupal\Core\Config\StorageComparerInterface $storage_comparer
  * @param array $extension_dirs
  */
-function drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs) {
+function drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs, $subdir = '') {
   /** @var \Drupal\cm_config_tools\ExtensionConfigHandler $helper */
   $helper = \Drupal::service('cm_config_tools');
 
@@ -248,7 +248,7 @@ function drush_cm_config_tools_preview_diff($storage_comparer, $extension_dirs) 
 
   if ($single_dir) {
     $type_extension_dirs = reset($extension_dirs);
-    drush_shell_exec('diff -x %s -u %s %s', '*.git', $temp_dir, key($type_extension_dirs));
+    drush_shell_exec('diff -x %s -u %s %s', '*.git', $temp_dir, key($type_extension_dirs) . '/' . $subdir);
   }
   else {
     // Copy source storage to another temporary directory.
