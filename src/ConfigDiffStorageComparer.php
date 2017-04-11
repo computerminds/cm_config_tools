@@ -83,4 +83,11 @@ class ConfigDiffStorageComparer extends StorageComparer {
     }
   }
 
+  /**
+   * Always ignores the site UUID.
+   */
+  public function validateSiteUuid() {
+    return TRUE;
+  }
+
 }
