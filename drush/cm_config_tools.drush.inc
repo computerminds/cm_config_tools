@@ -118,6 +118,17 @@ function cm_config_tools_drush_command() {
     ),
   );
 
+  $items['cm-config-tools-missing'] = array(
+    'description' => "List the configuration missing from any CM Config Tools manifest.",
+    'examples' => array(
+      'drush cm-config-tools-missing' => 'List the dependencies of the configuration',
+    ),
+    'aliases' => array('cmcm'),
+    'outputformat' => array(
+      'default' => 'yaml',
+    ),
+  );
+
   return $items;
 }
 
@@ -394,5 +405,13 @@ function drush_cm_config_tools_revert($names) {
  */
 function drush_cm_config_tools_suggest($extension) {
   $dependencies = \Drupal::service('cm_config_tools')->getExtensionConfigSuggestions($extension);
+  return $dependencies;
+}
+
+/**
+ * Drush command callback.
+ */
+function drush_cm_config_tools_missing() {
+  $dependencies = \Drupal::service('cm_config_tools')->getExtensionConfigMissing();
   return $dependencies;
 }

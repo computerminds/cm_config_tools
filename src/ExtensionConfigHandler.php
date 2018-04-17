@@ -647,6 +647,30 @@ class ExtensionConfigHandler implements ExtensionConfigHandlerInterface {
     return $this->sortAndFilterOutput(array('config' => $dependants), $exclude);
   }
 
+  public function getExtensionConfigMissing() {
+    $exclude = array('config' => array());
+
+    // This is all the config.
+    $all_config = \Drupal::configFactory()->listAll();
+
+    if ($extension_dirs = $this->getExtensionDirectories(TRUE)) {
+      foreach ($extension_dirs as $type => $type_source_dirs) {
+        foreach ($type_source_dirs as $source_dir => $extension_name) {
+          $info_filename = NULL;
+
+          // Get the configuration.
+          $info = $this->getExtensionInfo($type, $extension_name);
+          // Munge the sections into one.
+          $exportable = $info['managed'] + $info['unmanaged'] + $info['implicit'];
+          // Add the config exported by this extension into our exclusions.
+          $exclude['config'] = array_merge($exclude['config'], array_values($exportable));
+        }
+      }
+    }
+
+    return $this->sortAndFilterOutput(array('config' => $all_config), $exclude);
+  }
+
   /**
    * {@inheritdoc}
    */
